@@ -1,0 +1,262 @@
+[
+  {
+    "name": "learn",
+    "trans": [
+      "学习"
+    ],
+    "partOfSpeech": "v.",
+    "example": "I learn one word before breakfast.",
+    "exampleTranslation": "我在早餐前学一个单词。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 1
+  },
+  {
+    "name": "remember",
+    "trans": [
+      "记住"
+    ],
+    "partOfSpeech": "v.",
+    "example": "I remember the name of this bird.",
+    "exampleTranslation": "我记得这种鸟的名字。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 2
+  },
+  {
+    "name": "review",
+    "trans": [
+      "复习"
+    ],
+    "partOfSpeech": "v.",
+    "example": "We review five words after lunch.",
+    "exampleTranslation": "我们午饭后复习五个单词。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 3
+  },
+  {
+    "name": "listen",
+    "trans": [
+      "听"
+    ],
+    "partOfSpeech": "v.",
+    "example": "Listen to the rain by the window.",
+    "exampleTranslation": "在窗边听听雨声。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 4
+  },
+  {
+    "name": "write",
+    "trans": [
+      "写"
+    ],
+    "partOfSpeech": "v.",
+    "example": "Write your idea on this card.",
+    "exampleTranslation": "把你的想法写在这张卡片上。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 5
+  },
+  {
+    "name": "read",
+    "trans": [
+      "阅读"
+    ],
+    "partOfSpeech": "v.",
+    "example": "I read a short story on the train.",
+    "exampleTranslation": "我在火车上读一个短篇故事。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 6
+  },
+  {
+    "name": "speak",
+    "trans": [
+      "说话"
+    ],
+    "partOfSpeech": "v.",
+    "example": "Please speak slowly for me.",
+    "exampleTranslation": "请对我说慢一点。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 7
+  },
+  {
+    "name": "think",
+    "trans": [
+      "思考"
+    ],
+    "partOfSpeech": "v.",
+    "example": "Think about your next small step.",
+    "exampleTranslation": "想想你接下来的小步骤。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 8
+  },
+  {
+    "name": "repeat",
+    "trans": [
+      "重复"
+    ],
+    "partOfSpeech": "v.",
+    "example": "Repeat the word after a short pause.",
+    "exampleTranslation": "稍停一下后重复这个单词。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 9
+  },
+  {
+    "name": "practice",
+    "trans": [
+      "练习"
+    ],
+    "partOfSpeech": "v.",
+    "example": "We practice English in the kitchen.",
+    "exampleTranslation": "我们在厨房里练习英语。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 10
+  },
+  {
+    "name": "answer",
+    "trans": [
+      "回答"
+    ],
+    "partOfSpeech": "v.",
+    "example": "You can answer in a full sentence.",
+    "exampleTranslation": "你可以用一个完整的句子回答。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 11
+  },
+  {
+    "name": "question",
+    "trans": [
+      "问题"
+    ],
+    "partOfSpeech": "n.",
+    "example": "I have a question about this word.",
+    "exampleTranslation": "关于这个单词我有一个问题。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 12
+  },
+  {
+    "name": "meaning",
+    "trans": [
+      "含义"
+    ],
+    "partOfSpeech": "n.",
+    "example": "The picture helps explain the meaning.",
+    "exampleTranslation": "这张图有助于解释这个含义。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 13
+  },
+  {
+    "name": "sound",
+    "trans": [
+      "声音"
+    ],
+    "partOfSpeech": "n.",
+    "example": "A soft sound came from the garden.",
+    "exampleTranslation": "花园里传来轻轻的声音。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 14
+  },
+  {
+    "name": "letter",
+    "trans": [
+      "字母"
+    ],
+    "partOfSpeech": "n.",
+    "example": "The last letter is hard to see.",
+    "exampleTranslation": "最后一个字母很难看清。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 15
+  },
+  {
+    "name": "sentence",
+    "trans": [
+      "句子"
+    ],
+    "partOfSpeech": "n.",
+    "example": "This sentence has only four words.",
+    "exampleTranslation": "这个句子只有四个单词。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 16
+  },
+  {
+    "name": "story",
+    "trans": [
+      "故事"
+    ],
+    "partOfSpeech": "n.",
+    "example": "Tell me a story about your cat.",
+    "exampleTranslation": "给我讲一个关于你的猫的故事。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 17
+  },
+  {
+    "name": "page",
+    "trans": [
+      "页"
+    ],
+    "partOfSpeech": "n.",
+    "example": "There is a blue mark on this page.",
+    "exampleTranslation": "这一页上有一个蓝色标记。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 18
+  },
+  {
+    "name": "book",
+    "trans": [
+      "书"
+    ],
+    "partOfSpeech": "n.",
+    "example": "My book is beside the green cup.",
+    "exampleTranslation": "我的书在绿色杯子旁边。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 19
+  },
+  {
+    "name": "goal",
+    "trans": [
+      "目标"
+    ],
+    "partOfSpeech": "n.",
+    "example": "My goal is to read a little each day.",
+    "exampleTranslation": "我的目标是每天读一点。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 20
+  }
+]

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "dictionaryCount": 2,
+  "dictionaries": [
+    {
+      "id": "demo-basics",
+      "name": "记忆入门 · 示例词书",
+      "category": "开源示例",
+      "length": 20,
+      "url": "/dicts/demo-basics.json",
+      "orderIndex": 0,
+      "description": "本项目新编写的示例释义与例句，MIT 许可。",
+      "language": "en",
+      "chapterCount": 1
+    },
+    {
+      "id": "demo-daily",
+      "name": "日常生活 · 示例词书",
+      "category": "开源示例",
+      "length": 20,
+      "url": "/dicts/demo-daily.json",
+      "orderIndex": 1,
+      "description": "本项目新编写的示例释义与例句，MIT 许可。",
+      "language": "en",
+      "chapterCount": 1
+    }
+  ]
+}

@@ -1,0 +1,262 @@
+[
+  {
+    "name": "morning",
+    "trans": [
+      "早晨"
+    ],
+    "partOfSpeech": "n.",
+    "example": "The street is quiet in the morning.",
+    "exampleTranslation": "早晨这条街很安静。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 1
+  },
+  {
+    "name": "evening",
+    "trans": [
+      "傍晚"
+    ],
+    "partOfSpeech": "n.",
+    "example": "We walk by the river in the evening.",
+    "exampleTranslation": "我们傍晚在河边散步。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 2
+  },
+  {
+    "name": "water",
+    "trans": [
+      "水"
+    ],
+    "partOfSpeech": "n.",
+    "example": "There is fresh water in the bottle.",
+    "exampleTranslation": "瓶子里有新鲜的水。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 3
+  },
+  {
+    "name": "bread",
+    "trans": [
+      "面包"
+    ],
+    "partOfSpeech": "n.",
+    "example": "I put the warm bread on a plate.",
+    "exampleTranslation": "我把温热的面包放在盘子上。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 4
+  },
+  {
+    "name": "apple",
+    "trans": [
+      "苹果"
+    ],
+    "partOfSpeech": "n.",
+    "example": "She shared an apple with her brother.",
+    "exampleTranslation": "她和弟弟分吃了一个苹果。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 5
+  },
+  {
+    "name": "table",
+    "trans": [
+      "桌子"
+    ],
+    "partOfSpeech": "n.",
+    "example": "The little plant is on the table.",
+    "exampleTranslation": "那盆小植物在桌子上。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 6
+  },
+  {
+    "name": "window",
+    "trans": [
+      "窗户"
+    ],
+    "partOfSpeech": "n.",
+    "example": "Open the window for a little air.",
+    "exampleTranslation": "打开窗户透透气。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 7
+  },
+  {
+    "name": "garden",
+    "trans": [
+      "花园"
+    ],
+    "partOfSpeech": "n.",
+    "example": "Two birds are resting in our garden.",
+    "exampleTranslation": "两只鸟正在我们的花园里歇息。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 8
+  },
+  {
+    "name": "friend",
+    "trans": [
+      "朋友"
+    ],
+    "partOfSpeech": "n.",
+    "example": "My friend brings a new board game.",
+    "exampleTranslation": "我的朋友带来一个新的桌游。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 9
+  },
+  {
+    "name": "family",
+    "trans": [
+      "家人"
+    ],
+    "partOfSpeech": "n.",
+    "example": "My family cooks together on Sunday.",
+    "exampleTranslation": "星期天我们一家人一起做饭。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 10
+  },
+  {
+    "name": "walk",
+    "trans": [
+      "步行"
+    ],
+    "partOfSpeech": "v.",
+    "example": "I walk to the shop with a bag.",
+    "exampleTranslation": "我提着袋子步行去商店。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 11
+  },
+  {
+    "name": "open",
+    "trans": [
+      "打开"
+    ],
+    "partOfSpeech": "v.",
+    "example": "Open the small box on the shelf.",
+    "exampleTranslation": "打开架子上的小盒子。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 12
+  },
+  {
+    "name": "close",
+    "trans": [
+      "关闭"
+    ],
+    "partOfSpeech": "v.",
+    "example": "Close the door when you leave.",
+    "exampleTranslation": "离开时把门关上。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 13
+  },
+  {
+    "name": "choose",
+    "trans": [
+      "选择"
+    ],
+    "partOfSpeech": "v.",
+    "example": "Choose a color for your notebook.",
+    "exampleTranslation": "给你的笔记本选一个颜色。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 14
+  },
+  {
+    "name": "carry",
+    "trans": [
+      "携带"
+    ],
+    "partOfSpeech": "v.",
+    "example": "I carry a pencil in my pocket.",
+    "exampleTranslation": "我口袋里带着一支铅笔。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 15
+  },
+  {
+    "name": "small",
+    "trans": [
+      "小的"
+    ],
+    "partOfSpeech": "adj.",
+    "example": "A small boat waits near the bridge.",
+    "exampleTranslation": "一艘小船停在桥边。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 16
+  },
+  {
+    "name": "quiet",
+    "trans": [
+      "安静的"
+    ],
+    "partOfSpeech": "adj.",
+    "example": "We found a quiet place to read.",
+    "exampleTranslation": "我们找到了一个安静的地方读书。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 17
+  },
+  {
+    "name": "ready",
+    "trans": [
+      "准备好的"
+    ],
+    "partOfSpeech": "adj.",
+    "example": "I am ready for a short walk.",
+    "exampleTranslation": "我准备好去散一小会儿步了。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 18
+  },
+  {
+    "name": "useful",
+    "trans": [
+      "有用的"
+    ],
+    "partOfSpeech": "adj.",
+    "example": "This map is useful on our trip.",
+    "exampleTranslation": "这张地图在我们的旅途中很有用。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 19
+  },
+  {
+    "name": "together",
+    "trans": [
+      "一起"
+    ],
+    "partOfSpeech": "adv.",
+    "example": "Let us make a simple meal together.",
+    "exampleTranslation": "我们一起做顿简单的饭吧。",
+    "chapter": 1,
+    "unitId": "unit-1",
+    "unitName": "入门练习",
+    "orderIndex": 20
+  }
+]

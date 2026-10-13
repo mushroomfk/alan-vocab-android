@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Alan背单词</string>
+    <string name="notification_channel_name">学习提醒</string>
+    <string name="notification_channel_description">提醒你完成每日五步主线学习</string>
+</resources>

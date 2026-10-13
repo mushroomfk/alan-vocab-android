@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  只列出要备份的路径。完整词库数据库大约 30MB，超过 Auto Backup 25MB，这里不包含 database。
+  词库可以重新导入。学习记录用应用内 JSON。
+-->
+<full-backup-content>
+    <include domain="sharedpref" path="." />
+    <include domain="file" path="datastore" />
+    <exclude domain="sharedpref" path="alan_secure_session.xml" />
+    <exclude domain="sharedpref" path="alan_device.xml" />
+</full-backup-content>
