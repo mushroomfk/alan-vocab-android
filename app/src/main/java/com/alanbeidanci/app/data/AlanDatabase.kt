@@ -17,12 +17,14 @@ import androidx.room.RoomDatabase
         PendingSyncEventEntity::class,
         ServerStatsEntity::class,
         RetentionProfile::class,
+        DualTestSessionEntity::class,
     ],
-    version = 13,
+    version = 15,
     exportSchema = true,
 )
 abstract class AlanDatabase : RoomDatabase() {
     abstract fun retentionProfileDao(): RetentionProfileDao
+    abstract fun dualTestSessionDao(): DualTestSessionDao
     abstract fun wordBookDao(): WordBookDao
     abstract fun wordDao(): WordDao
     abstract fun progressDao(): ProgressDao
@@ -39,7 +41,7 @@ abstract class AlanDatabase : RoomDatabase() {
         ).addMigrations(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
             MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
-            MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
+            MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -171,6 +173,26 @@ abstract class AlanDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE review_logs ADD COLUMN practiceForm TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE review_logs ADD COLUMN eventKind TEXT NOT NULL DEFAULT 'answer'")
                 db.execSQL("ALTER TABLE review_logs ADD COLUMN scheduleGrade TEXT NOT NULL DEFAULT ''")
+            }
+        }
+        internal val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE word_progress ADD COLUMN answerExposedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN memoryExposed INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE word_progress SET answerExposedAt = MAX(lastReviewedAt, practiceSavedAt, COALESCE((SELECT MAX(timestamp) FROM review_logs WHERE review_logs.wordId = word_progress.wordId), 0))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS dual_test_sessions (`key` TEXT NOT NULL PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL)")
+                // Retain personal/previous parameters and all existing dates. Do not replay old evidence as v2.
+                db.execSQL("UPDATE retention_profile SET algorithm = 'alan-fsrs5-calibration-v2', generation = generation || '-v2', lastAttemptAt = 0, lastAttemptThrough = 0, trainedThrough = 0, activatedAt = 0, sampleCount = 0, candidateLoss = -1.0, baselineLoss = -1.0, status = 'COLLECTING' WHERE algorithm = 'alan-fsrs5-calibration-v1'")
+            }
+        }
+        internal val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE word_progress ADD COLUMN skillMemory TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE word_progress ADD COLUMN practicePlan TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE word_progress ADD COLUMN practiceSavedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN memorySkill TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN memoryWeight REAL NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN memorySource TEXT NOT NULL DEFAULT ''")
             }
         }
         internal val MIGRATION_12_13 = object : Migration(12, 13) {

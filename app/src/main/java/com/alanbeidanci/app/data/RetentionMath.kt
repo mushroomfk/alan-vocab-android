@@ -53,7 +53,8 @@ object RetentionMath {
         val difficulty = if (memory.difficulty <= 0.0) initialDifficulty(GOOD) else memory.difficulty
         val recall = (1.0 + FACTOR * elapsedDays.coerceAtLeast(0.0) / stability).pow(DECAY)
         val nextStability = if (rating == AGAIN) {
-            personal.lapse * difficulty.pow(-w[12]) * ((stability + 1.0).pow(w[13]) - 1.0) * exp(w[14] * (1.0 - recall))
+            (personal.lapse * difficulty.pow(-w[12]) * ((stability + 1.0).pow(w[13]) - 1.0) * exp(w[14] * (1.0 - recall)))
+                .coerceAtMost(stability)
         } else {
             val gain = exp(personal.gain) * (11.0 - difficulty) * stability.pow(-w[9]) * (exp(w[10] * (1.0 - recall)) - 1.0)
             stability * (gain + 1.0)

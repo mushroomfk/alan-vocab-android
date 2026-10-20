@@ -1,0 +1,2 @@
+美式 Kristin、英式 Cori。录音来自 LibriVox，公有领域。
+模型由 Piper / sherpa-onnx 提供，int8 medium。

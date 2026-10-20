@@ -8,6 +8,10 @@ import com.alanbeidanci.app.data.MainlineTestKind
 import com.alanbeidanci.app.data.LearningContentPresentation
 import com.alanbeidanci.app.data.QuestionType
 import com.alanbeidanci.app.data.WordEntity
+import com.alanbeidanci.app.data.DualTestCheckpoint
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -40,7 +44,7 @@ data class RemedyUiState(
     val bothCorrect: Int = 0,
 ) {
     val currentWord: WordEntity? get() = words.getOrNull(currentIndex)
-    val skipAvailable: Boolean get() = currentWrong >= 4 && !locked
+    val skipAvailable: Boolean get() = false
     val progress: Float get() = ((completedQuestions + 1).toFloat() / (words.size * 2).coerceAtLeast(1)).coerceIn(0f, 1f)
     val questionIndex: Int get() = (completedQuestions + 1).coerceAtMost((words.size * 2).coerceAtLeast(1))
     val title: String get() = when (kind) {
@@ -61,30 +65,80 @@ class RemedyTestViewModel(
     private val studyClock = StudyClock()
     private var echoText: String = ""
     private var echoUntilMs: Long = 0
-    private val listenResults = mutableMapOf<Long, Boolean>()
+    private var checkpoint: DualTestCheckpoint? = null
+    private var checkpointWrite: Job? = null
+    private var initialTypedChars = 0
+    private var initialCorrectChars = 0
+    private var initialBothCorrect = 0
 
     init {
         viewModelScope.launch {
             container.repository.ensureSeeded()
-            val settings = container.preferences.settings.first()
-            val words = container.repository.getDualTestWords(settings, kind)
-            _uiState.value = RemedyUiState(
-                loading = false,
-                kind = kind,
-                words = words,
-                accent = settings.accent,
-                completed = settings.selectedBookIds.isNotEmpty() && words.isEmpty(),
-                noBooks = settings.selectedBookIds.isEmpty(),
-            )
+            loadBatch()
         }
     }
 
+    private suspend fun loadBatch() {
+        val settings = container.preferences.settings.first()
+        val batch = container.repository.dualTests.load(settings, kind)
+        checkpoint = batch?.checkpoint
+        _uiState.value = if (batch == null) RemedyUiState(loading = false, kind = kind, accent = settings.accent,
+            completed = settings.selectedBookIds.isNotEmpty(), noBooks = settings.selectedBookIds.isEmpty())
+        else stateFor(batch.checkpoint, RemedyUiState(loading = false, kind = kind, words = batch.words, accent = settings.accent))
+        initialTypedChars = _uiState.value.typedChars
+        initialCorrectChars = _uiState.value.correctChars
+        initialBothCorrect = _uiState.value.bothCorrect
+    }
+
+    private fun stateFor(cp: DualTestCheckpoint, base: RemedyUiState): RemedyUiState = base.copy(
+        round = if (cp.round == 0) RemedyRound.ENGLISH else RemedyRound.CHINESE, currentIndex = cp.index,
+        input = cp.input, currentWrong = cp.currentWrong, totalWrong = cp.totalWrong,
+        typedChars = cp.typedChars, correctChars = cp.correctChars, completedQuestions = cp.completedQuestions,
+        currentError = cp.holdResult && !cp.holdCorrect, holdResult = cp.holdResult, holdCorrect = cp.holdCorrect,
+        locked = cp.holdResult, listenScore = cp.listening.values.count { it },
+        chineseScore = cp.spelling.values.count { it }, bothCorrect = cp.bothCorrect,
+    )
+
     fun start() {
+        if (_uiState.value.started || checkpoint == null) return
         studyClock.start(System.currentTimeMillis())
-        _uiState.value = _uiState.value.copy(started = true)
+        _uiState.value = _uiState.value.copy(started = true, locked = true)
+        prepareQuestion()
+    }
+
+    private fun prepareQuestion() {
+        val captured = checkpoint ?: return
+        viewModelScope.launch {
+            val prepared = withContext(NonCancellable) {
+                checkpointWrite?.join()
+                container.repository.dualTests.prepare(captured)
+            }
+            if (checkpoint?.sessionId != captured.sessionId || checkpoint?.round != captured.round || checkpoint?.index != captured.index) return@launch
+            checkpoint = prepared
+            _uiState.value = stateFor(prepared, _uiState.value)
+        }
+    }
+
+    private fun captureCheckpoint(answered: Boolean = false): DualTestCheckpoint? {
+        val cp = checkpoint ?: return null
+        val state = _uiState.value
+        if (cp.preparedAt == 0L || state.completed || (state.locked && !state.holdResult)) return null
+        return cp.copy(revision = cp.revision + 1, input = state.input, holdResult = state.holdResult,
+            holdCorrect = state.holdCorrect, currentWrong = state.currentWrong, totalWrong = state.totalWrong,
+            typedChars = state.typedChars, correctChars = state.correctChars,
+            answeredAt = if (answered) System.currentTimeMillis() else cp.answeredAt).also { checkpoint = it }
+    }
+
+    private fun persistState(answered: Boolean = false) {
+        val saved = captureCheckpoint(answered) ?: return
+        val previous = checkpointWrite
+        checkpointWrite = viewModelScope.launch {
+            withContext(NonCancellable) { previous?.join(); container.repository.dualTests.save(saved) }
+        }
     }
 
     fun finish() {
+        persistState()
         if (sessionSaved) return
         sessionSaved = true
         val state = _uiState.value
@@ -97,10 +151,10 @@ class RemedyTestViewModel(
                 container.repository.saveSession(
                     mode = "TEST",
                     wordCount = if (closing) state.words.size else 0,
-                    completed = if (closing) state.bothCorrect else 0,
+                    completed = if (closing) (state.bothCorrect - initialBothCorrect).coerceAtLeast(0) else 0,
                     durationMs = slice.durationMs,
-                    typedChars = if (closing) state.typedChars else 0,
-                    correctChars = if (closing) state.correctChars else 0,
+                    typedChars = if (closing) (state.typedChars - initialTypedChars).coerceAtLeast(0) else 0,
+                    correctChars = if (closing) (state.correctChars - initialCorrectChars).coerceAtLeast(0) else 0,
                     startedAt = slice.startedAt,
                     finishedAt = slice.finishedAt,
                 )
@@ -110,7 +164,7 @@ class RemedyTestViewModel(
 
     fun onStudyForeground() = studyClock.foreground(System.currentTimeMillis())
 
-    fun onStudyBackground() = studyClock.background(System.currentTimeMillis())
+    fun onStudyBackground() { studyClock.background(System.currentTimeMillis()); persistState() }
 
     fun tickStudyClock() = studyClock.tick(System.currentTimeMillis())
 
@@ -120,7 +174,7 @@ class RemedyTestViewModel(
         studyClock.interact(System.currentTimeMillis())
         val state = _uiState.value
         val word = state.currentWord ?: return
-        if (state.locked) return
+        if (!state.started || state.locked) return
         val normalized = LetterInput.letters(value)
         if (normalized.isNotEmpty() && normalized == echoText && System.currentTimeMillis() < echoUntilMs) return
         val target = letterCharacters(canonical(word.word))
@@ -138,6 +192,7 @@ class RemedyTestViewModel(
                 holdResult = true,
                 holdCorrect = false,
             )
+            persistState(answered = true)
             return
         }
         if (decision.accepted) {
@@ -150,6 +205,7 @@ class RemedyTestViewModel(
                 holdCorrect = true,
                 currentError = false,
             )
+            persistState(answered = true)
             return
         }
         if (decision.text == state.input) return
@@ -161,29 +217,35 @@ class RemedyTestViewModel(
         val state = _uiState.value
         if (!state.holdResult) return
         if (state.holdCorrect) {
-            answerCurrent(
-                correct = state.currentWrong == 0,
-                spellingQuality = if (state.currentWrong == 0) "exact" else "unknown",
-            )
+            answerCurrent(correct = true)
             return
         }
-        _uiState.value = state.copy(holdResult = false, holdCorrect = false, locked = false, input = "", currentError = false)
+        answerCurrent(correct = false)
     }
 
-    fun skip() {
+    /** 听不出来或不认识，先看正确答案，再记为没通过并进入下一题。 */
+    fun giveUp() {
         studyClock.interact(System.currentTimeMillis())
-        if (!_uiState.value.skipAvailable) return
-        answerCurrent(correct = false, spellingQuality = "unknown")
+        val state = _uiState.value
+        if (!state.started || state.locked || state.holdResult || state.completed) return
+        _uiState.value = state.copy(
+            locked = true,
+            holdResult = true,
+            holdCorrect = false,
+            currentError = true,
+            currentWrong = state.currentWrong + 1,
+            totalWrong = state.totalWrong + 1,
+        )
+        persistState(answered = true)
     }
 
-    private fun answerCurrent(correct: Boolean, spellingQuality: String) {
+    fun skip() = giveUp()
+
+    private fun answerCurrent(correct: Boolean) {
         val state = _uiState.value
-        val word = state.currentWord ?: return
-        if (state.locked) return
-        val listenPass = if (state.round == RemedyRound.ENGLISH) correct else listenResults[word.id] ?: false
-        val chinesePass = if (state.round == RemedyRound.CHINESE) correct else null
-        if (state.round == RemedyRound.ENGLISH) listenResults[word.id] = correct
-        val both = state.round == RemedyRound.CHINESE && listenPass && correct
+        val captured = checkpoint ?: return
+        if (!state.holdResult) return
+        val both = state.round == RemedyRound.CHINESE && captured.listening[captured.wordId] == true && correct
         _uiState.value = state.copy(
             input = "",
             currentWrong = 0,
@@ -197,42 +259,21 @@ class RemedyTestViewModel(
             bothCorrect = state.bothCorrect + if (both) 1 else 0,
         )
         viewModelScope.launch {
-            container.repository.recordDualAnswer(
-                wordId = word.id,
-                correct = correct,
-                type = if (state.round == RemedyRound.ENGLISH) QuestionType.LISTENING else QuestionType.MEANING,
-                listenPass = listenPass,
-                chinesePass = chinesePass,
-                kind = kind,
-                spellingQuality = spellingQuality,
-            )
-            advanceAfter(_uiState.value.copy(locked = false))
+            val result = withContext(NonCancellable) {
+                checkpointWrite?.join()
+                container.repository.dualTests.answer(captured)
+            }
+            if (!result.accepted) { loadBatch(); return@launch }
+            checkpoint = result.next
+            echoText = ""
+            if (result.next == null) {
+                studyClock.hold(System.currentTimeMillis())
+                _uiState.value = _uiState.value.copy(completed = true, locked = false)
+            } else {
+                _uiState.value = stateFor(result.next, _uiState.value).copy(locked = true)
+                prepareQuestion()
+            }
         }
-    }
-
-    private fun advanceAfter(state: RemedyUiState) {
-        echoText = ""
-        if (state.round == RemedyRound.ENGLISH && state.currentIndex + 1 >= state.words.size) {
-            _uiState.value = state.copy(
-                round = RemedyRound.CHINESE,
-                currentIndex = 0,
-                input = "",
-                currentWrong = 0,
-                currentError = false,
-            )
-            return
-        }
-        if (state.currentIndex + 1 >= state.words.size) {
-            studyClock.hold(System.currentTimeMillis())
-            _uiState.value = state.copy(completed = true, locked = false)
-            return
-        }
-        _uiState.value = state.copy(
-            currentIndex = state.currentIndex + 1,
-            input = "",
-            currentWrong = 0,
-            currentError = false,
-        )
     }
 
     private fun canonical(value: String): String = LearningContentPresentation.canonicalSpelling(value).replace("…", "..")

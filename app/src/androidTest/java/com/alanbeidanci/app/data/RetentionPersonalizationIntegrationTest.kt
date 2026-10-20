@@ -68,7 +68,7 @@ class RetentionPersonalizationIntegrationTest {
         repository.recordRetention(1, RetentionGrade.LAPSE, practiceForm = "RECALL")
         val originalLog = db.reviewLogDao().getAll().single()
         val json = backup.exportJson()
-        assertEquals(3, JSONObject(json).getInt("formatVersion"))
+        assertEquals(5, JSONObject(json).getInt("formatVersion"))
         repository.restore(emptyList(), emptyList())
         backup.restoreJson(json)
         val restored = db.retentionProfileDao().get()!!
@@ -197,7 +197,7 @@ class RetentionPersonalizationIntegrationTest {
         helper.writableDatabase
         helper.close()
         val migrated = Room.databaseBuilder(app, AlanDatabase::class.java, name)
-            .addMigrations(AlanDatabase.MIGRATION_12_13).build()
+            .addMigrations(AlanDatabase.MIGRATION_12_13, AlanDatabase.MIGRATION_13_14, AlanDatabase.MIGRATION_14_15).build()
         try {
             val row = migrated.progressDao().getByWordId(1)!!
             assertEquals(7, row.attempts)

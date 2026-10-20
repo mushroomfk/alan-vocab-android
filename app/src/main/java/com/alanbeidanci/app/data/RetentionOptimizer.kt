@@ -19,8 +19,8 @@ object RetentionOptimizer {
     const val CHECK_INTERVAL = 30 * DAY
     const val MAX_LOGS = 20_000
 
-    data class Review(val time: Long, val elapsed: Double, val good: Boolean)
-    data class Sequence(val wordId: Long, val seed: RetentionMath.Memory, val reviews: List<Review>)
+    data class Review(val time: Long, val elapsed: Double, val good: Boolean, val weight: Double = 1.0)
+    data class Sequence(val wordId: Long, val seed: RetentionMath.Memory, val reviews: List<Review>, val skillModel: Boolean = false)
     data class Prediction(val wordId: Long, val time: Long, val probability: Double, val good: Boolean) {
         val loss: Double get() {
             val p = probability.coerceIn(0.001, 0.999)
@@ -29,21 +29,32 @@ object RetentionOptimizer {
         val brier: Double get() = (probability - if (good) 1.0 else 0.0).let { it * it }
     }
 
-    /** A broken chronology, hint, same-day repetition or legacy row breaks the chain. */
+    /** Hints and broken state chains end an episode; unchanged zero-weight practice is skipped. */
     fun sequences(logs: List<ReviewLogEntity>, now: Long): List<Sequence> {
         val result = mutableListOf<Sequence>()
-        logs.groupBy { it.wordId }.forEach { (word, entries) ->
+        logs.groupBy { Triple(it.wordId, it.memoryAlgorithm, it.memorySkill) }.forEach { (key, entries) ->
+            val word = key.first
+            val skillModel = key.second == SkillMemory.ALGORITHM
             var last: ReviewLogEntity? = null
             var seed = RetentionMath.Memory(1.0, 5.0)
             val reviews = mutableListOf<Review>()
             fun flush() {
-                if (reviews.size >= 2) result += Sequence(word, seed, reviews.toList())
+                if (reviews.size >= 2) result += Sequence(word, seed, reviews.toList(), skillModel)
                 reviews.clear()
             }
-            entries.sortedWith(compareBy<ReviewLogEntity> { it.timestamp }.thenBy { it.id }).forEach { row ->
+            entries.sortedWith(compareBy<ReviewLogEntity> { it.timestamp }.thenBy { it.id }).forEach rowLoop@ { row ->
+                val unchangedPractice = skillModel && row.eventKind == "schedule" && row.correct &&
+                    !row.hinted && !row.memoryIndependent && row.memoryWeight == 0.0 &&
+                    row.memorySkill in MemorySkill.entries.map { it.name } && row.scheduleGrade == "GOOD" &&
+                    row.timestamp in 1..now && row.memoryPreviousReviewAt in 1..row.timestamp &&
+                    row.memoryBeforeStability.isFinite() && row.memoryBeforeStability in 0.1..36500.0 &&
+                    row.memoryBeforeDifficulty.isFinite() && row.memoryBeforeDifficulty in 1.0..10.0
+                if (unchangedPractice) return@rowLoop
                 val elapsed = (row.timestamp - row.memoryPreviousReviewAt) / DAY.toDouble()
-                val valid = row.eventKind == "schedule" && row.memoryAlgorithm == RetentionParameters.ALGORITHM &&
-                    row.memoryIndependent && row.timestamp in 1..now && row.memoryPreviousReviewAt > 0 &&
+                val valid = row.eventKind == "schedule" && (row.memoryAlgorithm == RetentionParameters.ALGORITHM ||
+                        (skillModel && row.memorySkill in MemorySkill.entries.map { it.name } &&
+                            row.memoryWeight.isFinite() && row.memoryWeight in 0.01..1.0)) &&
+                    row.memoryIndependent && !row.memoryExposed && !row.hinted && row.timestamp in 1..now && row.memoryPreviousReviewAt > 0 &&
                     elapsed in 1.0..3650.0 && row.memoryBeforeStability.isFinite() &&
                     row.memoryBeforeStability in 0.1..36500.0 && row.memoryBeforeDifficulty.isFinite() &&
                     row.memoryBeforeDifficulty in 1.0..10.0 && row.scheduleGrade in setOf("GOOD", "LAPSE") &&
@@ -56,7 +67,7 @@ object RetentionOptimizer {
                         flush()
                         seed = RetentionMath.Memory(row.memoryBeforeStability, row.memoryBeforeDifficulty)
                     }
-                    reviews += Review(row.timestamp, elapsed, row.correct)
+                    reviews += Review(row.timestamp, elapsed, row.correct, if (skillModel) row.memoryWeight else 1.0)
                     last = row
                 }
             }
@@ -72,7 +83,8 @@ object RetentionOptimizer {
                 // The first snapshot is an initialization, not evidence for the new parameters.
                 if (index > 0) add(Prediction(sequence.wordId, review.time,
                     RetentionMath.recallProbability(memory.stability, review.elapsed), review.good))
-                memory = if (review.good) RetentionMath.reviewGood(memory, review.elapsed, parameters)
+                memory = if (sequence.skillModel) SkillMemory.transition(memory, review.good, review.elapsed, review.weight, parameters)
+                    else if (review.good) RetentionMath.reviewGood(memory, review.elapsed, parameters)
                     else RetentionMath.reviewAgain(memory, review.elapsed, parameters)
             }
         }

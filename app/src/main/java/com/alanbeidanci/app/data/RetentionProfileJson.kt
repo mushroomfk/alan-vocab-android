@@ -24,7 +24,7 @@ object RetentionProfileJson {
             activatedAt = json.getLong("activatedAt"), sampleCount = json.getInt("sampleCount"),
             status = json.getString("status"), candidateLoss = json.getDouble("candidateLoss"),
             baselineLoss = json.getDouble("baselineLoss"),
-        )
+        ).upgradeLegacy()
         require(profile.isValid()) { "备份中的复习参数版本或数值无效" }
         return profile
     }

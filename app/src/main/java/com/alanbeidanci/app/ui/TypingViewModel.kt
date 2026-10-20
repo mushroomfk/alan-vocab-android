@@ -22,6 +22,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
+import com.alanbeidanci.app.data.MemorySource
+import com.alanbeidanci.app.data.MemorySkill
+import com.alanbeidanci.app.data.SkillPracticePlan
+import kotlinx.coroutines.Job
+
 data class PracticeChoice(val wordId: Long, val label: String)
 
 data class TypingUiState(
@@ -32,6 +37,7 @@ data class TypingUiState(
     val round: Int = 1,
     val started: Boolean = false,
     val scopeLabel: String = "",
+    val listPracticeLabel: String = "",
     val currentIndex: Int = 0,
     val input: String = "",
     val currentWrong: Int = 0,
@@ -50,6 +56,7 @@ data class TypingUiState(
     val noBooks: Boolean = false,
     val practiceForm: PracticeForm = PracticeForm.STUDY,
     val cleanRecalls: Int = 0,
+    val skillProgress: String = "",
     val answerVisible: Boolean = false,
     val learnMissed: Boolean = false,
     val graduatedCount: Int = 0,
@@ -66,6 +73,7 @@ data class TypingUiState(
     val cleanFinishes: Int = 0,
     val lapseFinishes: Int = 0,
     val recheckFinishes: Int = 0,
+    val canContinueLearning: Boolean = false,
 ) {
     val currentWord: WordEntity? get() = words.getOrNull(currentIndex)
     val skipAvailable: Boolean get() = currentWrong >= 4 && !locked
@@ -87,6 +95,8 @@ data class TypingUiState(
 class TypingViewModel(
     private val container: AppContainer,
     private val purpose: TypingPurpose,
+    private val reviewScope: String = "",
+    private val beyondPlan: Boolean = false,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(TypingUiState(purpose = purpose))
     val uiState: StateFlow<TypingUiState> = _uiState
@@ -102,12 +112,17 @@ class TypingViewModel(
     private var pendingEffect: PracticeEffect? = null
     private var pendingAdvance: (() -> Unit)? = null
     private var advanceGeneration = 0
+    private var evidenceWrite: Job? = null
 
     init {
         viewModelScope.launch {
             container.repository.ensureSeeded()
             val settings = container.preferences.settings.first()
-            val scheduledWords = container.repository.getTypingWords(settings, purpose)
+            val scheduledWords = when {
+                reviewScope.isNotBlank() -> container.repository.reviewListWords(settings, reviewScope)
+                beyondPlan -> container.repository.moreLearnWords(settings, emptySet())
+                else -> container.repository.getTypingWords(settings, purpose)
+            }
             originalWords = scheduledWords.distinctBy { it.id }
             if (purpose == TypingPurpose.MAINLINE_LEARN || purpose == TypingPurpose.MAINLINE_CONSOLIDATE || purpose == TypingPurpose.RELEARN) {
                 savedPractice = container.repository.practiceSnapshots(originalWords.map { it.id }.toSet())
@@ -119,6 +134,7 @@ class TypingViewModel(
                 words = scheduledWords,
                 originalWordCount = originalWords.size,
                 scopeLabel = buildScopeLabel(settings),
+                listPracticeLabel = reviewListLabel(reviewScope),
                 completed = scheduledWords.isEmpty() && settings.selectedBookIds.isNotEmpty(),
                 noBooks = settings.selectedBookIds.isEmpty(),
             )
@@ -137,7 +153,7 @@ class TypingViewModel(
         } else {
             PracticePhase.LEARN
         }
-        val examples = originalWords.associate { it.id to it.example.isNotBlank() }
+        val examples = originalWords.associate { it.id to (LearningContentPresentation.clozeFor(container.applicationContext, it) != null) }
         val session = MemoryPractice.begin(originalWords.map { it.id }, savedPractice, phase, examples)
         practiceQueue = session.pending
         val first = session.showing
@@ -147,6 +163,43 @@ class TypingViewModel(
             return
         }
         showMemory(first, _uiState.value.copy(started = true, graduatedCount = 0, parkedCount = 0))
+    }
+
+    /** 计划时长内的词学完后，再取一批。计时不截断，学到自己停为止。 */
+    fun continueLearning() {
+        if (purpose != TypingPurpose.MAINLINE_LEARN) return
+        viewModelScope.launch {
+            val settings = container.preferences.settings.first()
+            val more = container.repository.moreLearnWords(settings, originalWords.map { it.id }.toSet())
+            if (more.isEmpty()) {
+                _uiState.value = _uiState.value.copy(canContinueLearning = false)
+                return@launch
+            }
+            val snapshots = container.repository.practiceSnapshots(more.map { it.id }.toSet())
+                .mapValues { (_, snapshot) -> snapshot.toSaved() }
+            savedPractice = savedPractice + snapshots
+            originalWords = originalWords + more
+            val examples = more.associate { word ->
+                word.id to (LearningContentPresentation.clozeFor(container.applicationContext, word) != null)
+            }
+            val session = MemoryPractice.begin(more.map { it.id }, snapshots, PracticePhase.LEARN, examples)
+            practiceQueue = session.pending
+            val first = session.showing ?: return@launch
+            studyClock.start(System.currentTimeMillis())
+            showMemory(
+                first,
+                _uiState.value.copy(
+                    started = true,
+                    completed = false,
+                    canContinueLearning = false,
+                    originalWordCount = originalWords.size,
+                    locked = false,
+                    holdResult = false,
+                    learnMissed = false,
+                    answerVisible = false,
+                ),
+            )
+        }
     }
 
     fun acknowledgeStudy() {
@@ -202,6 +255,21 @@ class TypingViewModel(
                 container.repository.savePracticeSession(hinted.toSession(), requestedAt)
             }
         }
+    }
+
+    /** 听写、默写、填空里完全不会：先看正确拼写，点「下一个」再按写错继续。 */
+    fun giveUp() {
+        noteStudy()
+        val state = _uiState.value
+        val word = state.currentWord ?: return
+        val card = memory ?: return
+        if (!state.isLearnRecall || !state.started || state.completed || state.holdResult || state.locked) return
+        if (card.form != PracticeForm.RECALL && card.form != PracticeForm.LISTEN &&
+            card.form != PracticeForm.CLOZE && card.form != PracticeForm.FADED
+        ) {
+            return
+        }
+        onPracticeWrong(state, word, "", gaveUp = true)
     }
 
     fun skipLearnWord() {
@@ -407,6 +475,7 @@ class TypingViewModel(
                 ) { advancePractice(graduated = false, parked = false, deferred = true) }
             }
             is PracticeEffect.Show -> {
+                memory = effect.state
                 launchSessionSave(effect.state)
                 val next = effect
                 holdResult(
@@ -426,12 +495,17 @@ class TypingViewModel(
         }
     }
 
-    private fun onPracticeWrong(state: TypingUiState, word: WordEntity, attempt: String) {
+    private fun onPracticeWrong(state: TypingUiState, word: WordEntity, attempt: String, gaveUp: Boolean = false) {
         val card = memory ?: return
-        val effect = MemoryPractice.afterWrong(card)
+        val effect = MemoryPractice.afterWrong(card, gaveUp)
         logAttempt(card, state.practiceForm, correct = false)
         roundProblemIds += word.id
         val spellingMiss = attempt.isNotEmpty()
+        val missText = when {
+            gaveUp -> "不会。正确拼写在上面"
+            spellingMiss -> "错了。红字是没写对的字母，上面是正确拼写"
+            else -> "选错了。上面是正确答案"
+        }
         val reveal = state.copy(
             input = attempt,
             typedChars = state.typedChars + attempt.length.coerceAtLeast(1),
@@ -444,7 +518,7 @@ class TypingViewModel(
                 memory = effect.state
                 launchSessionSave(effect.state)
                 val next = effect
-                holdResult(reveal, correct = false, feedback = if (spellingMiss) "错了。红字是没写对的字母，上面是正确拼写" else "选错了。上面是正确答案") {
+                holdResult(reveal, correct = false, feedback = missText) {
                     if (next.gap > 0) MemoryPractice.place(practiceQueue, next.state, next.gap)
                     advancePractice(graduated = false, parked = false)
                 }
@@ -457,9 +531,11 @@ class TypingViewModel(
                     launchSessionSave(effect.state)
                 }
                 val message = if (isRetentionReview() && effect.reason == StopReason.FAILED) {
-                    "错了。红字是没写对的字母。明天再查一次"
+                    "$missText。明天再查一次"
+                } else if (gaveUp || spellingMiss) {
+                    "$missText。这词先放下，下次从更容易的题开始"
                 } else {
-                    "错了。红字是没写对的字母。这词先放下，下次从更容易的题开始"
+                    missText
                 }
                 holdResult(reveal, correct = false, feedback = message) {
                     advancePractice(graduated = false, parked = true)
@@ -470,7 +546,7 @@ class TypingViewModel(
                 memory = null
                 launchRetention(card.wordId, effect.grade, card.copy(abilities = effect.abilities), state.practiceForm.name, card)
                 val grade = effect.grade
-                holdResult(reveal, correct = false, feedback = "错了。红字是没写对的字母。${gradeFeedback(grade)}") {
+                holdResult(reveal, correct = false, feedback = "$missText。${gradeFeedback(grade)}") {
                     advancePractice(graduated = true, parked = false, grade = grade)
                 }
             }
@@ -489,6 +565,7 @@ class TypingViewModel(
         ) { advancePractice(graduated = true, parked = false, grade = effect.grade) }
         viewModelScope.launch {
             val days = withContext(NonCancellable) {
+                evidenceWrite?.join()
                 if (isRetentionReview()) {
                     container.repository.recordRetention(
                         wordId = card.wordId,
@@ -517,10 +594,13 @@ class TypingViewModel(
                     0
                 }
             }
-            if (days > 0) {
+            val nextPlan = container.repository.nextSkillReviewDescription(card.wordId)
+            if (days > 0 || nextPlan.isNotBlank()) {
                 val remembered = if (effect.grade == RetentionGrade.GOOD) _uiState.value.scheduledDays + days else _uiState.value.scheduledDays
                 _uiState.value = _uiState.value.copy(
-                    feedback = gradeFeedback(effect.grade, days),
+                    feedback = if (_uiState.value.currentWord?.id == card.wordId && _uiState.value.holdResult)
+                        listOf(gradeFeedback(effect.grade, days), nextPlan).filter { it.isNotBlank() }.joinToString("\n")
+                        else _uiState.value.feedback,
                     scheduledDays = remembered,
                 )
             }
@@ -551,6 +631,7 @@ class TypingViewModel(
             holdStudy()
             _uiState.value = base.copy(
                 completed = true,
+                canContinueLearning = false,
                 locked = false,
                 holdResult = false,
                 answerVisible = false,
@@ -558,14 +639,27 @@ class TypingViewModel(
                 problemCount = roundProblemIds.size,
                 wrongWords = roundProblemIds.size,
             )
+            refreshContinueAvailability()
             return
         }
         showMemory(next, base)
     }
 
+    private fun refreshContinueAvailability() {
+        if (purpose != TypingPurpose.MAINLINE_LEARN) return
+        viewModelScope.launch {
+            val settings = container.preferences.settings.first()
+            val more = container.repository.moreLearnWords(settings, originalWords.map { it.id }.toSet())
+            if (_uiState.value.completed) {
+                _uiState.value = _uiState.value.copy(canContinueLearning = more.isNotEmpty())
+            }
+        }
+    }
+
     private fun showMemory(state: MemoryState, base: TypingUiState) {
         val word = originalWords.firstOrNull { it.id == state.wordId }
-        val hasExample = !word?.example.isNullOrBlank()
+        val clozeQuestion = word?.let { LearningContentPresentation.clozeFor(container.applicationContext, it) }
+        val hasExample = clozeQuestion != null
         val form = MemoryPractice.presentedForm(state.form, hasExample)
         val shown = state.copy(
             form = form,
@@ -581,10 +675,13 @@ class TypingViewModel(
             input = "",
             currentWrong = 0,
             currentError = false,
-            locked = false,
+            locked = true,
             isFavorite = false,
             practiceForm = form,
             cleanRecalls = shown.cleanRecalls,
+            skillProgress = shown.plan?.targets?.joinToString(" · ") {
+                "${it.skill.label} ${it.passed}/${it.required}"
+            }.orEmpty(),
             answerVisible = false,
             learnMissed = false,
             holdResult = false,
@@ -593,7 +690,7 @@ class TypingViewModel(
             choices = emptyList(),
             fadeHint = if (form == PracticeForm.FADED) MemoryPractice.letterHint(canonical(word?.word.orEmpty())) else "",
             cloze = if (form == PracticeForm.CLOZE) {
-                MainlineScheduler.blankExample(word?.example.orEmpty(), canonical(word?.word.orEmpty()))
+                clozeQuestion?.prompt.orEmpty()
             } else {
                 ""
             },
@@ -601,6 +698,18 @@ class TypingViewModel(
             started = true,
         )
         refreshFavorite()
+        if (word != null) {
+            val previous = evidenceWrite
+            evidenceWrite = viewModelScope.launch {
+                val access = withContext(NonCancellable) {
+                    previous?.join()
+                    container.repository.prepareRetrieval(word.id, form.name)
+                }
+                if (_uiState.value.cardSerial != serial || memory?.wordId != word.id) return@launch
+                memory = shown.copy(exposed = shown.exposed || access.exposed)
+                _uiState.value = _uiState.value.copy(locked = false)
+            }
+        }
         if ((form == PracticeForm.PICK_MEANING || form == PracticeForm.PICK_SPELLING) && word != null) {
             loadChoices(word, form, serial)
         }
@@ -624,31 +733,39 @@ class TypingViewModel(
     }
 
     private fun feedbackText(move: PracticeMove): String = when (move) {
-        PracticeMove.HARDER -> "对了，下一题少一点提示"
+        PracticeMove.HARDER -> "对了，继续本词需要练习的分项"
         PracticeMove.AGAIN -> "对了，等会儿再考一次"
         PracticeMove.INTRODUCE -> "先看，再写"
-        PracticeMove.EASIER -> "看答案，下一题提示多一点"
+        PracticeMove.EASIER -> "看答案，继续练习刚才没通过的分项"
     }
 
     private fun gradeFeedback(grade: RetentionGrade, days: Int = 0): String = when (grade) {
-        RetentionGrade.GOOD -> if (days > 0) "这次自己想起来了，下次再隔 $days 天" else "这次自己想起来了"
-        RetentionGrade.LAPSE -> "这次补上了，但第一次没想起来，明天再查"
-        RetentionGrade.RECHECK -> "听过再写对，不算自己想起来，明天再查"
+        RetentionGrade.GOOD -> if (days > 0) "首次检查通过，下次分项检查再隔 $days 天" else "首次检查通过"
+        RetentionGrade.LAPSE -> "有分项没独立想起来，明天再查"
+        RetentionGrade.RECHECK -> "看过或听过答案，本次作为练习，明天再查"
         RetentionGrade.PRACTICE -> "这次练习通过了"
     }
 
     private fun logAttempt(card: MemoryState, form: PracticeForm, correct: Boolean) {
-        viewModelScope.launch {
+        val previous = evidenceWrite
+        evidenceWrite = viewModelScope.launch {
             withContext(NonCancellable) {
+                previous?.join()
                 container.repository.logRetrieval(
                     wordId = card.wordId,
                     correct = correct,
                     type = questionType(form),
                     form = form.name,
-                    firstAttempt = card.firstResult == FirstResult.NONE,
+                    firstAttempt = MemorySkill.forForm(form.name)?.let { card.plan?.first(it) } ?: (card.firstResult == FirstResult.NONE),
                     hinted = card.hinted,
                     eventKind = "answer",
                     mainline = true,
+                    source = when (purpose) {
+                        TypingPurpose.RELEARN -> MemorySource.REPAIR
+                        TypingPurpose.MAINLINE_CONSOLIDATE -> MemorySource.REVIEW
+                        else -> MemorySource.LEARN
+                    },
+                    exposedBeforeQuestion = card.exposed,
                 )
             }
         }
@@ -670,6 +787,7 @@ class TypingViewModel(
     ) {
         viewModelScope.launch {
             val days = withContext(NonCancellable) {
+                evidenceWrite?.join()
                 container.repository.recordRetention(
                     wordId = wordId,
                     grade = grade,
@@ -684,10 +802,13 @@ class TypingViewModel(
                         (card.firstResult == FirstResult.NONE && !card.hinted),
                 )
             }
-            if (grade == RetentionGrade.GOOD && days > 0) {
+            val nextPlan = container.repository.nextSkillReviewDescription(wordId)
+            if (days > 0) {
                 _uiState.value = _uiState.value.copy(
-                    feedback = gradeFeedback(grade, days),
-                    scheduledDays = _uiState.value.scheduledDays + days,
+                    feedback = if (_uiState.value.currentWord?.id == wordId && _uiState.value.holdResult)
+                        listOf(gradeFeedback(grade, days), nextPlan).filter { it.isNotBlank() }.joinToString("\n")
+                        else _uiState.value.feedback,
+                    scheduledDays = if (grade == RetentionGrade.GOOD) _uiState.value.scheduledDays + days else _uiState.value.scheduledDays,
                 )
             }
         }
@@ -718,6 +839,7 @@ class TypingViewModel(
         listening = abilities.listening,
         spelling = abilities.spelling,
         context = abilities.context,
+        plan = plan?.encode().orEmpty(),
     )
 
     private fun PracticeSnapshot.toSaved(): SavedPractice {
@@ -733,6 +855,8 @@ class TypingViewModel(
             firstResult = first,
             abilities = AbilityMarks(meaning, listening, spelling, context),
             hasSession = formName.isNotBlank() || legacy,
+            skillMemory = skillMemory,
+            plan = SkillPracticePlan.decode(plan),
         )
     }
 
@@ -751,7 +875,7 @@ class TypingViewModel(
     private fun finishWord(state: TypingUiState, typed: Int, correct: Int) {
         val word = state.currentWord ?: return
         val hadWrong = state.currentWrong > 0
-        viewModelScope.launch { container.repository.recordTypingCompletion(word.id, purpose) }
+        viewModelScope.launch { container.repository.recordTypingCompletion(word.id, purpose, shaky = hadWrong) }
         completedOriginalIds += word.id
         val shown = state.copy(
             input = letterCharacters(canonical(word.word)),
@@ -819,10 +943,24 @@ class TypingViewModel(
     private fun letterCharacters(value: String): String = LetterInput.letters(value)
 
     companion object {
-        fun factory(container: AppContainer, purpose: TypingPurpose): ViewModelProvider.Factory =
+        fun factory(
+            container: AppContainer,
+            purpose: TypingPurpose,
+            reviewScope: String = "",
+            beyondPlan: Boolean = false,
+        ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
-                override fun <T : ViewModel> create(modelClass: Class<T>): T = TypingViewModel(container, purpose) as T
+                override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                    TypingViewModel(container, purpose, reviewScope, beyondPlan) as T
             }
+
+        fun reviewListLabel(scope: String): String = when (scope) {
+            "pending" -> "待复习"
+            "mastered" -> "已掌握"
+            "fixed" -> "已牢记"
+            "favorite" -> "收藏"
+            else -> ""
+        }
     }
 }

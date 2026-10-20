@@ -33,7 +33,9 @@ import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.NavType
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.alanbeidanci.app.AppContainer
 import com.alanbeidanci.app.data.DictionaryPrepareState
 import com.alanbeidanci.app.data.MainlineStep
@@ -62,8 +64,10 @@ object Routes {
     const val SETTINGS = "settings"
     const val SEARCH = "search"
     const val MAINLINE_LEARN = "mainline/learn"
+    const val MAINLINE_LEARN_MORE = "mainline/learn-more"
     const val MAINLINE_REVIEW = "mainline/review"
-    const val AUTONOMOUS_REVIEW = "review/practice"
+    const val AUTONOMOUS_REVIEW = "review/practice?scope={scope}"
+    fun reviewPractice(scope: String = "") = "review/practice?scope=$scope"
     const val RELEARN = "review/relearn"
     const val TEST_REMEDY = "mainline/test/remedy"
     const val TEST_CONSOLIDATION = "mainline/test/consolidation"
@@ -100,6 +104,7 @@ fun AlanVocabRoot(container: AppContainer, settings: UserSettings) {
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
     val protectedMainlineRoutes = setOf(
         Routes.MAINLINE_LEARN,
+        Routes.MAINLINE_LEARN_MORE,
         Routes.MAINLINE_REVIEW,
         Routes.TEST_REMEDY,
         Routes.TEST_CONSOLIDATION,
@@ -115,6 +120,7 @@ fun AlanVocabRoot(container: AppContainer, settings: UserSettings) {
     }
     val immersive = currentRoute in setOf(
         Routes.MAINLINE_LEARN,
+        Routes.MAINLINE_LEARN_MORE,
         Routes.MAINLINE_REVIEW,
         Routes.AUTONOMOUS_REVIEW,
         Routes.RELEARN,
@@ -178,14 +184,20 @@ fun AlanVocabRoot(container: AppContainer, settings: UserSettings) {
                             }
                         }
                     },
+                    onContinueLearning = {
+                        if (session?.mainlineEnabled != false && !preparingMainline) {
+                            navController.navigate(Routes.MAINLINE_LEARN_MORE)
+                        }
+                    },
                     onBooks = { navController.navigate(Routes.BOOKS) },
                 )
             }
             composable(Routes.REVIEW) {
                 ReviewScreen(
                     container = container,
-                    onStartReview = { navController.navigate(Routes.AUTONOMOUS_REVIEW) },
+                    onStartReview = { navController.navigate(Routes.reviewPractice()) },
                     onStartForgotten = { navController.navigate(Routes.RELEARN) },
+                    onPracticeList = { scope -> navController.navigate(Routes.reviewPractice(scope)) },
                 )
             }
             composable(Routes.BOOKS) {
@@ -204,11 +216,34 @@ fun AlanVocabRoot(container: AppContainer, settings: UserSettings) {
             composable(Routes.MAINLINE_LEARN) {
                 TypingStudyScreen(container, TypingPurpose.MAINLINE_LEARN, settings, onClose = { navController.popBackStack() }, onSelectBooks = { navController.navigate(Routes.BOOKS) })
             }
+            composable(Routes.MAINLINE_LEARN_MORE) {
+                TypingStudyScreen(
+                    container,
+                    TypingPurpose.MAINLINE_LEARN,
+                    settings,
+                    onClose = { navController.popBackStack() },
+                    onSelectBooks = { navController.navigate(Routes.BOOKS) },
+                    beyondPlan = true,
+                )
+            }
             composable(Routes.MAINLINE_REVIEW) {
                 TypingStudyScreen(container, TypingPurpose.MAINLINE_REVIEW, settings, onClose = { navController.popBackStack() }, onSelectBooks = { navController.navigate(Routes.BOOKS) })
             }
-            composable(Routes.AUTONOMOUS_REVIEW) {
-                TypingStudyScreen(container, TypingPurpose.AUTONOMOUS_REVIEW, settings, onClose = { navController.popBackStack() }, onSelectBooks = { navController.navigate(Routes.BOOKS) })
+            composable(
+                Routes.AUTONOMOUS_REVIEW,
+                arguments = listOf(navArgument("scope") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                }),
+            ) { entry ->
+                TypingStudyScreen(
+                    container,
+                    TypingPurpose.AUTONOMOUS_REVIEW,
+                    settings,
+                    onClose = { navController.popBackStack() },
+                    onSelectBooks = { navController.navigate(Routes.BOOKS) },
+                    reviewScope = entry.arguments?.getString("scope").orEmpty(),
+                )
             }
             composable(Routes.RELEARN) {
                 TypingStudyScreen(container, TypingPurpose.RELEARN, settings, onClose = { navController.popBackStack() }, onSelectBooks = { navController.navigate(Routes.BOOKS) })

@@ -28,6 +28,8 @@ import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Policy
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -41,15 +43,24 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.alanbeidanci.app.AppContainer
+import com.alanbeidanci.app.audio.SpeechCredentials
 import com.alanbeidanci.app.ui.SettingsViewModel
 import com.alanbeidanci.app.ui.components.AppCard
 import com.alanbeidanci.app.ui.components.PageHeading
+import com.alanbeidanci.app.ui.components.SpeechPlaybackChecks
 import com.alanbeidanci.app.notifications.ReminderScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -129,7 +140,7 @@ fun SettingsScreen(
                     OptionRow(options = listOf(10, 20, 30, 50), selected = settings.dailyGoal, label = { "$it 个" }, onSelect = viewModel::setDailyGoal)
                     Spacer(Modifier.height(18.dp))
                     Text("每天大概学多久？", style = MaterialTheme.typography.titleLarge)
-                    Text("先保证到期和没记住的词，剩下的时间再学新词。还没有学习记录时，20 分钟大约学 5 个新词；有记录后按你实际用时算。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("这是今天的计划时长，按它排今天先学多少。学的时候可以超时，这一批做完还可以继续，不会被时长截断。还没有学习记录时，20 分钟大约先排 5 个新词。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(16.dp))
                     OptionRow(options = listOf(20, 30, 45, 90), selected = settings.dailyMinutes, label = { "$it 分钟" }, onSelect = viewModel::setDailyMinutes)
                     Spacer(Modifier.height(18.dp))
@@ -167,6 +178,10 @@ fun SettingsScreen(
                 Column(Modifier.padding(20.dp)) {
                     Text("发音偏好", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(8.dp))
+                    SpeechKeySettings()
+                    Spacer(Modifier.height(16.dp))
+                    SpeechPlaybackChecks(settings.accent, settings.studySpeechRate)
+                    Spacer(Modifier.height(16.dp))
                     Text("默认口音", style = MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(14.dp))
                     OptionRow(
@@ -222,6 +237,61 @@ fun SettingsScreen(
         }
         SnackbarHost(snackbar, modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp))
     }
+}
+
+@Composable
+private fun SpeechKeySettings() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var configured by remember { mutableStateOf(SpeechCredentials.isConfigured(context)) }
+    var editing by remember { mutableStateOf(false) }
+    var input by remember { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    Text("在线英语发音", style = MaterialTheme.typography.titleMedium)
+    Text(if (configured) "已保存本机 Key，未缓存的词可使用豆包语音。" else "填写自己的火山引擎 API Key 后可使用豆包语音；未配置时使用 Piper。",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text("Key 仅在本机加密保存，不进入学习备份。已有发音缓存可以继续使用。", style = MaterialTheme.typography.bodySmall)
+    TextButton(onClick = { input = ""; error = null; editing = true }) {
+        Text(if (configured) "更换在线发音 Key" else "设置在线发音 Key")
+    }
+    if (configured) TextButton(enabled = !saving, onClick = {
+        saving = true
+        scope.launch {
+            val removed = withContext(Dispatchers.IO) { runCatching { SpeechCredentials.clear(context) }.isSuccess }
+            saving = false
+            if (removed) { configured = false; error = null } else error = "Key 未能删除，请重试。"
+        }
+    }) { Text("删除在线发音 Key") }
+    if (!editing) error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    if (editing) AlertDialog(
+        onDismissRequest = { if (!saving) { editing = false; input = ""; error = null } },
+        title = { Text("在线发音 Key") },
+        text = {
+            Column {
+                Text("填写你自己的火山引擎语音服务 API Key。保存后仅用于英文发音请求。")
+                OutlinedTextField(value = input, onValueChange = { input = it; error = null },
+                    label = { Text("API Key") }, singleLine = true, enabled = !saving,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.fillMaxWidth().testTag("speech-api-key"))
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = !saving && input.isNotBlank(), onClick = {
+                val entered = input
+                saving = true
+                scope.launch {
+                    val saved = withContext(Dispatchers.IO) { runCatching { SpeechCredentials.save(context, entered) }.isSuccess }
+                    saving = false
+                    if (saved) { configured = true; editing = false; input = ""; error = null }
+                    else error = "Key 未能保存，请检查输入后重试。"
+                }
+            }) { Text(if (saving) "保存中…" else "保存") }
+        },
+        dismissButton = { TextButton(enabled = !saving, onClick = { editing = false; input = ""; error = null }) { Text("取消") } },
+    )
 }
 
 @Composable

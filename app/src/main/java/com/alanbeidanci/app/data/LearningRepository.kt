@@ -79,6 +79,8 @@ data class PracticeSnapshot(
     val listening: Int = 0,
     val spelling: Int = 0,
     val context: Int = 0,
+    val skillMemory: String = "",
+    val plan: String = "",
 )
 
 data class PracticeSession(
@@ -92,6 +94,7 @@ data class PracticeSession(
     val listening: Int,
     val spelling: Int,
     val context: Int,
+    val plan: String = "",
 )
 
 data class DayStat(
@@ -134,6 +137,7 @@ data class StatsReport(
     val listeningMastery: MasteryMetric = MasteryMetric(),
     val meaningMastery: MasteryMetric = MasteryMetric(),
     val spellingStability: MasteryMetric = MasteryMetric(),
+    val independentRecall: Map<MemorySkill, MasteryMetric> = emptyMap(),
     val days: List<DayStat> = emptyList(),
     val books: List<BookMasteryGroup> = emptyList(),
 )
@@ -255,6 +259,7 @@ class LearningRepository(
     private val bookDao = db.wordBookDao()
     private val wordDao = db.wordDao()
     private val progressDao = db.progressDao()
+    val dualTests = DualTestSessions(db, this)
     private val logDao = db.reviewLogDao()
     private val sessionDao = db.studySessionDao()
     private val pendingSyncDao = db.pendingSyncDao()
@@ -270,6 +275,7 @@ class LearningRepository(
     val progress: Flow<List<WordProgressEntity>> = progressDao.observeAll()
     val logs: Flow<List<ReviewLogEntity>> = logDao.observeAll()
     val sessions: Flow<List<StudySessionEntity>> = sessionDao.observeAll()
+    internal val calendarChanges = localCalendarChanges()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     fun observeScopedWords(): Flow<List<WordEntity>> =
@@ -360,7 +366,7 @@ class LearningRepository(
         }
     }
 
-    fun observeHome(): Flow<HomeSummary> = combine(progress, logs) { progressItems, logItems ->
+    fun observeHome(): Flow<HomeSummary> = combine(progress, logs, calendarChanges) { progressItems, logItems, _ ->
         val today = LocalDate.now()
         val todayLogs = logItems.filter { it.localDate() == today && it.countsAsAnswer() && it.questionType != QuestionType.CONFIDENCE.name }
         val mainlineDualLogs = todayLogs.filter { it.isDual && it.isMainline }
@@ -390,7 +396,8 @@ class LearningRepository(
         serverStatsDao.observeAll(),
         pendingSyncDao.observeAll(),
         preferences?.settings ?: flowOf(UserSettings()),
-    ) { input, statsItems, pendingEvents, settings ->
+        calendarChanges,
+    ) { input, statsItems, pendingEvents, settings, _ ->
         val progressItems = input.progressItems
         val logItems = input.logItems
         val sessionItems = input.sessionItems
@@ -508,9 +515,9 @@ class LearningRepository(
             val wordIds = dayLogs.map { it.wordId }.toSet()
             val newWords = wordIds.count { firstSeen[it] == date }
             val masteredWords = wordIds.count { progressByWord[it]?.isMastered == true }
-            val spelling = dayLogs.count { it.questionType == QuestionType.SPELLING.name }
-            val listening = dayLogs.count { it.questionType == QuestionType.LISTENING.name }
-            val meaning = dayLogs.count { it.questionType == QuestionType.MEANING.name }
+            val spelling = dayLogs.count { it.actualSkill() == MemorySkill.SPELLING }
+            val listening = dayLogs.count { it.actualSkill() == MemorySkill.LISTENING }
+            val meaning = dayLogs.count { it.actualSkill() == MemorySkill.MEANING }
             val methodParts = buildList {
                 if (spelling > 0) add("拼写$spelling")
                 if (listening > 0) add("听音$listening")
@@ -538,10 +545,11 @@ class LearningRepository(
         }
 
         val todayStart = today.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-        val todayLogs = nonConfidence.filter { it.timestamp >= todayStart }
+        val tomorrowStart = today.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val todayLogs = nonConfidence.filter { it.timestamp in todayStart until tomorrowStart }
         val todayWords = if (todayMerged?.hasDetails == true) todayMerged.words else todayLogs.map { it.wordId }.distinct().size
         val todayDuration = todayMerged?.durationMs
-            ?: sessionItems.filter { it.startedAt >= todayStart }.sumOf { it.durationMs }
+            ?: sessionItems.filter { it.startedAt in todayStart until tomorrowStart }.sumOf { it.durationMs }
         val useRemoteAnswerDetails = todayMerged?.hasDetails == true
         val todayAnswers = if (useRemoteAnswerDetails) todayMerged.answers else todayLogs.size
         val todayCorrect = if (useRemoteAnswerDetails) todayMerged.correct else todayLogs.count { it.correct }
@@ -552,38 +560,20 @@ class LearningRepository(
         val todayMainlineCorrect = if (useRemoteAnswerDetails) todayMerged.mainlineCorrect else todayMainlineLogs.count { it.correct }
         val todayMainlineAccuracy = if (todayMainlineAnswers == 0) 0 else
             (todayMainlineCorrect * 100 / todayMainlineAnswers)
-        val pendingDimensions = pendingMainlineDimensions(pendingEvents)
-        val localMainlineDimensionLogs = nonConfidence.filter {
-            it.isDual && it.isMainline && it.questionType in setOf(QuestionType.LISTENING.name, QuestionType.MEANING.name)
-        }
-        fun localDimension(type: QuestionType): MasteryMetric {
-            val rows = localMainlineDimensionLogs.filter { it.questionType == type.name }
+        val dimensionAnswers = nonConfidence.filter { it.isMainline }
+        fun localDimension(skill: MemorySkill): MasteryMetric {
+            val rows = dimensionAnswers.filter { it.actualSkill() == skill }
             return MasteryMetric(rows.count { it.correct }.toLong(), rows.size.toLong())
         }
-        val listeningMastery: MasteryMetric
-        val meaningMastery: MasteryMetric
-        val spellingStability: MasteryMetric
-        if (remote?.hasMainlineDimensions == true) {
-            listeningMastery = MasteryMetric(
-                correct = remote.mainlineListeningCorrect + pendingDimensions.listening.correct,
-                total = remote.mainlineListeningAnswers + pendingDimensions.listening.total,
-            )
-            meaningMastery = MasteryMetric(
-                correct = remote.mainlineMeaningCorrect + pendingDimensions.meaning.correct,
-                total = remote.mainlineMeaningAnswers + pendingDimensions.meaning.total,
-            )
-            spellingStability = MasteryMetric(
-                correct = remote.mainlineSpellingExact + pendingDimensions.spelling.correct,
-                total = remote.mainlineSpellingAnswers + pendingDimensions.spelling.total,
-                near = remote.mainlineSpellingNear + pendingDimensions.spelling.near,
-            )
-        } else {
-            listeningMastery = localDimension(QuestionType.LISTENING)
-            meaningMastery = localDimension(QuestionType.MEANING)
-            spellingStability = MasteryMetric(
-                correct = localMainlineDimensionLogs.count { it.correct }.toLong(),
-                total = localMainlineDimensionLogs.size.toLong(),
-            )
+        // Legacy remote "meaning" aggregates were Chinese-to-English spelling, not meaning recall.
+        val listeningMastery = localDimension(MemorySkill.LISTENING)
+        val meaningMastery = localDimension(MemorySkill.MEANING)
+        val spellingStability = localDimension(MemorySkill.SPELLING)
+        val independentRecall = MemorySkill.entries.associateWith { skill ->
+            val rows = logItems.filter { it.eventKind == "schedule" && it.memoryAlgorithm == SkillMemory.ALGORITHM &&
+                it.memorySkill == skill.name && it.memoryIndependent && !it.memoryExposed && !it.hinted &&
+                it.memoryPreviousReviewAt > 0 && it.timestamp - it.memoryPreviousReviewAt >= SkillMemory.DAY }
+            MasteryMetric(rows.count { it.correct }.toLong(), rows.size.toLong())
         }
         val activeDays = nonConfidence
             .map { Instant.ofEpochMilli(it.timestamp).atZone(ZoneId.systemDefault()).toLocalDate() }
@@ -634,6 +624,7 @@ class LearningRepository(
             listeningMastery = listeningMastery,
             meaningMastery = meaningMastery,
             spellingStability = spellingStability,
+            independentRecall = independentRecall,
             days = dayStats,
             books = bookMastery,
         )
@@ -780,7 +771,7 @@ class LearningRepository(
         }
     }
 
-    fun observeReviewCollections(): Flow<ReviewCollections> = combine(progress, observeScopedWords()) { items, scopedWords ->
+    fun observeReviewCollections(): Flow<ReviewCollections> = combine(progress, observeScopedWords(), calendarChanges) { items, scopedWords, _ ->
         val words = scopedWords.associateBy { it.id }
         val all = items.mapNotNull { progressItem ->
             words[progressItem.wordId]?.let { WordWithProgress(it, progressItem) }
@@ -947,12 +938,43 @@ class LearningRepository(
         else MainlineScheduler.expandReviewRounds(selected, progress)
     }
 
+    /** 今天计划时长之外，再取一批还没学过的新词。 */
+    suspend fun moreLearnWords(settings: UserSettings, excludeIds: Set<Long>): List<WordEntity> =
+        MainlineScheduler.extraLearnWords(
+            getScopedWords(settings),
+            progressDao.getAll(),
+            settings,
+            excludeIds,
+            pace = currentPace(),
+        )
+
     suspend fun getDualTestWords(settings: UserSettings, kind: MainlineTestKind): List<WordEntity> {
         val plan = MainlineScheduler.plan(getScopedWords(settings), progressDao.getAll(), settings, pace = currentPace())
         return when (kind) {
             MainlineTestKind.REMEDY -> plan.remedyTestWords
             MainlineTestKind.CONSOLIDATION -> plan.consolidationWords
             MainlineTestKind.NEW_WORDS -> plan.pendingTestWords
+        }
+    }
+
+    // 复习页当前列表的练习词，顺序与页面上看到的一致。不改主线排期。
+    suspend fun reviewListWords(settings: UserSettings, scope: String): List<WordEntity> {
+        val byId = getScopedWords(settings).associateBy { it.id }
+        val progress = progressDao.getAll().filter { it.wordId in byId }
+        fun wordsOf(rows: List<WordProgressEntity>) = rows.mapNotNull { byId[it.wordId] }
+        return when (scope) {
+            "mastered" -> wordsOf(progress.filter { it.category == "mastered" }.sortedByDescending { it.lastReviewedAt })
+            "fixed" -> wordsOf(progress.filter { it.category == "fixed" }.sortedByDescending { it.fixedAt })
+            "favorite" -> wordsOf(progress.filter { it.isFavorite }.sortedBy { byId[it.wordId]?.word.orEmpty() })
+            "pending" -> {
+                val forgotten = wordsOf(progress.filter { it.category == "relearn" }.sortedBy { it.dueAt })
+                val pending = wordsOf(
+                    progress.filter { it.mainlineClassifiedDate.isNotBlank() && it.category in setOf("error", "weak") }
+                        .sortedByDescending { it.wrongCount },
+                )
+                (forgotten + pending).distinctBy { it.id }
+            }
+            else -> emptyList()
         }
     }
 
@@ -981,20 +1003,24 @@ class LearningRepository(
                     listening = row.abilityListening,
                     spelling = row.abilitySpelling,
                     context = row.abilityContext,
+                    skillMemory = row.skillMemory,
+                    plan = row.practicePlan,
                 )
             }
         }
     }
 
     /** 中断时保留这词已经写对、写错和有没有求助。不改到期日，也不当成遗忘。比这次保存更新的写入不会被盖掉。 */
-    suspend fun savePracticeSession(session: PracticeSession, requestedAt: Long = System.currentTimeMillis()) {
+    suspend fun savePracticeSession(session: PracticeSession, requestedAt: Long = System.currentTimeMillis()) = db.withTransaction {
         val current = progressDao.getByWordId(session.wordId) ?: WordProgressEntity(wordId = session.wordId)
-        if (current.updatedAt > requestedAt) return
+        if (current.practiceSavedAt > requestedAt) return@withTransaction
         val now = System.currentTimeMillis()
         val keepLevel = current.attempts > 0 || current.mainlineLearnedDate.isNotBlank()
         progressDao.upsert(
             current.copy(
                 level = if (keepLevel) current.level else formRung(session.formName),
+                practicePlan = session.plan,
+                practiceSavedAt = requestedAt,
                 practiceHits = session.hits,
                 practiceMisses = session.misses,
                 practiceHinted = session.hinted,
@@ -1018,7 +1044,7 @@ class LearningRepository(
         spelling: Int = 0,
         context: Int = 0,
         logSummary: Boolean = true,
-    ) {
+    ) = db.withTransaction {
         val now = System.currentTimeMillis()
         val today = MainlineScheduler.dateKey(now)
         val current = progressDao.getByWordId(wordId) ?: WordProgressEntity(wordId = wordId)
@@ -1035,14 +1061,21 @@ class LearningRepository(
                 abilitySpelling = spelling,
                 abilityContext = context,
                 practiceForm = "",
+                practicePlan = "",
+                practiceSavedAt = now,
                 practiceHits = 0,
                 practiceMisses = 0,
                 practiceHinted = false,
                 firstResult = "",
             )
         }
+        if (current.skillMemory.isNotBlank()) {
+            next = SkillMemory.aggregate(next, SkillMemory.finishPractice(activeSkillStates(current), now), now)
+                .copy(category = next.category, isMastered = next.isMastered)
+        }
+        next = next.copy(answerExposedAt = maxOf(current.answerExposedAt, now))
         progressDao.upsert(next)
-        if (!logSummary) return
+        if (!logSummary) return@withTransaction
         logAnswer(
             wordId = wordId,
             correct = !shaky,
@@ -1070,6 +1103,19 @@ class LearningRepository(
 
     private suspend fun currentPace(): StudyPace = MainlineScheduler.paceFromSessions(sessionDao.getAll())
 
+    /** Preview uses the very same planner as the next review, at its currently scheduled date. */
+    suspend fun nextSkillReviewDescription(wordId: Long): String {
+        val progress = progressDao.getByWordId(wordId) ?: return ""
+        if (progress.skillMemory.isBlank()) return ""
+        val states = activeSkillStates(progress)
+        val now = System.currentTimeMillis()
+        val at = maxOf(now, progress.dueAt)
+        val plan = SkillPracticePlan.create(states, review = true, now = at)
+        val steps = plan.targets.joinToString(" → ") { "${it.skill.label}${it.required}次" }
+        val days = MainlineScheduler.daysUntil(now, progress.dueAt).coerceAtLeast(0)
+        return "下次复习：$steps（无提示练习次数），${if (days == 0) "尚未完成，可继续" else "隔${days}天"}。"
+    }
+
     /** 返回下次再隔的天数，方便界面直接显示。 */
     suspend fun recordRetention(
         wordId: Long,
@@ -1089,7 +1135,15 @@ class LearningRepository(
         val profile = db.retentionProfileDao().get() ?: RetentionProfile()
         val parameters = if (profile.isValid()) profile.parameters() else RetentionParameters()
         val before = MainlineScheduler.seedMemory(current)
-        val next = MainlineScheduler.applyRetention(
+        val next = if (current.skillMemory.isNotBlank()) {
+            val states = SkillMemory.finishPractice(activeSkillStates(current), now)
+            SkillMemory.aggregate(current, states, now).copy(
+                practiceForm = "", practicePlan = "", practiceSavedAt = now,
+                practiceHits = 0, practiceMisses = 0, practiceHinted = false, firstResult = "",
+                mainlineConsolidationDate = MainlineScheduler.dateKey(now),
+                lastReviewedAt = now, updatedAt = now,
+            )
+        } else MainlineScheduler.applyRetention(
             current, grade, now,
             meaning = meaning ?: current.abilityMeaning,
             listening = listening ?: current.abilityListening,
@@ -1102,7 +1156,7 @@ class LearningRepository(
             wordId = wordId, timestamp = now, correct = grade == RetentionGrade.GOOD,
             questionType = questionTypeForForm(practiceForm).name, isMainline = true,
             firstAttempt = firstAttempt, hinted = hinted, practiceForm = practiceForm,
-            eventKind = "schedule", scheduleGrade = grade.name,
+            eventKind = if (current.skillMemory.isBlank()) "schedule" else "summary", scheduleGrade = grade.name,
             memoryAlgorithm = RetentionParameters.ALGORITHM,
             memoryBeforeStability = before.stability, memoryBeforeDifficulty = before.difficulty,
             memoryPreviousReviewAt = current.lastReviewedAt,
@@ -1123,7 +1177,14 @@ class LearningRepository(
         hinted: Boolean,
         eventKind: String,
         mainline: Boolean,
-    ) {
+        source: MemorySource = MemorySource.REVIEW,
+        exposedBeforeQuestion: Boolean? = null,
+    ) = db.withTransaction {
+        val exposed = exposedBeforeQuestion ?: SkillMemory.exposedOnDay(
+            progressDao.getByWordId(wordId)?.answerExposedAt ?: 0, System.currentTimeMillis())
+        if (eventKind == "answer") {
+            MemorySkill.forForm(form)?.let { recordSkillEvidence(wordId, it, correct, firstAttempt, hinted, source, form, exposed = exposed) }
+        }
         logAnswer(
             wordId = wordId,
             correct = correct,
@@ -1133,7 +1194,78 @@ class LearningRepository(
             hinted = hinted,
             practiceForm = form,
             eventKind = eventKind,
+            memoryExposed = exposed,
         )
+        if (eventKind == "answer" || eventKind == "hint") noteAnswerExposure(wordId)
+    }
+
+    private suspend fun activeSkillStates(progress: WordProgressEntity): Map<MemorySkill, SkillState> {
+        val word = wordDao.getById(progress.wordId)
+        return SkillMemory.states(progress, word != null && LearningContentPresentation.clozeFor(context, word) != null)
+    }
+
+    data class RetrievalAccess(val exposed: Boolean, val preparedAt: Long)
+
+    /** Capture eligibility before the cue/result is shown; one unexposed probe per word/calendar day. */
+    suspend fun prepareRetrieval(wordId: Long, form: String): RetrievalAccess = db.withTransaction {
+        val now = System.currentTimeMillis()
+        val current = progressDao.getByWordId(wordId) ?: WordProgressEntity(wordId)
+        val exposed = form == "STUDY" || SkillMemory.formReliability(form) == 0.0 ||
+            SkillMemory.exposedOnDay(current.answerExposedAt, now)
+        progressDao.upsert(current.copy(answerExposedAt = maxOf(current.answerExposedAt, now)))
+        RetrievalAccess(exposed, now)
+    }
+
+    suspend fun noteAnswerExposure(wordId: Long) = db.withTransaction {
+        val current = progressDao.getByWordId(wordId) ?: WordProgressEntity(wordId)
+        progressDao.upsert(current.copy(answerExposedAt = maxOf(current.answerExposedAt, System.currentTimeMillis())))
+    }
+
+    private suspend fun recordSkillEvidence(
+        wordId: Long, skill: MemorySkill, correct: Boolean, first: Boolean, hinted: Boolean,
+        source: MemorySource, form: String, finalizeWord: Boolean = false,
+        exposed: Boolean = false, now: Long = System.currentTimeMillis(),
+    ) {
+        val current = progressDao.getByWordId(wordId) ?: WordProgressEntity(wordId = wordId)
+        val word = wordDao.getById(wordId) ?: return
+        val states = SkillMemory.states(current, LearningContentPresentation.clozeFor(context, word) != null).toMutableMap()
+        val before = states[skill] ?: return
+        val profile = db.retentionProfileDao().get() ?: RetentionProfile()
+        val parameters = if (profile.isValid()) profile.parameters() else RetentionParameters()
+        val update = SkillMemory.update(before, correct, first, hinted, source, form, now, parameters, exposed)
+        states[skill] = update.after
+        var next = SkillMemory.aggregate(current, states, now).copy(updatedAt = now)
+        if (finalizeWord) {
+            val completedAt = System.currentTimeMillis()
+            next = SkillMemory.aggregate(next, SkillMemory.finishPractice(states, completedAt), completedAt)
+        }
+        // During first learning, keep the word in its current mainline stage until completion/dual test.
+        if (source in setOf(MemorySource.LEARN, MemorySource.REVIEW, MemorySource.REPAIR) ||
+            (source in setOf(MemorySource.TEST, MemorySource.NEW_TEST) && !finalizeWord)) {
+            next = next.copy(category = current.category, isMastered = current.isMastered, dueAt = current.dueAt)
+        }
+        val mark = if (hinted || !correct) 1 else if (first && SkillMemory.formReliability(form) > 0) 2 else SkillMemory.mark(current, skill)
+        next = when (skill) {
+            MemorySkill.MEANING -> next.copy(abilityMeaning = mark)
+            MemorySkill.LISTENING -> next.copy(abilityListening = mark)
+            MemorySkill.SPELLING -> next.copy(abilitySpelling = mark)
+            MemorySkill.CONTEXT -> next.copy(abilityContext = mark)
+        }
+        progressDao.upsert(next)
+        logDao.insert(ReviewLogEntity(
+            wordId = wordId, timestamp = now, correct = correct, questionType = when (skill) {
+                MemorySkill.MEANING -> QuestionType.MEANING.name
+                MemorySkill.LISTENING -> QuestionType.LISTENING.name
+                else -> QuestionType.SPELLING.name
+            }, isMainline = true, isTest = source in setOf(MemorySource.TEST, MemorySource.NEW_TEST),
+            firstAttempt = first, hinted = hinted, practiceForm = form,
+            eventKind = "schedule", scheduleGrade = if (hinted) "RECHECK" else if (correct) "GOOD" else "LAPSE",
+            memoryAlgorithm = SkillMemory.ALGORITHM, memorySkill = skill.name, memoryWeight = update.weight,
+            memorySource = source.name, memoryBeforeStability = before.stability, memoryBeforeDifficulty = before.difficulty,
+            memoryPreviousReviewAt = before.lastAt, memoryIndependent = update.independent,
+            memoryModelRevision = profile.revision,
+            memoryExposed = exposed,
+        ))
     }
 
     suspend fun confirmMainlineReview(wordIds: Collection<Long>) {
@@ -1161,34 +1293,49 @@ class LearningRepository(
         chinesePass: Boolean?,
         kind: MainlineTestKind,
         spellingQuality: String,
-    ) {
-        require(type == QuestionType.LISTENING || type == QuestionType.MEANING)
-        val now = System.currentTimeMillis()
-        val today = MainlineScheduler.dateKey(now)
+        exposedBeforeQuestion: Boolean? = null,
+        answeredAt: Long = System.currentTimeMillis(),
+    ) = db.withTransaction {
+        require(type in setOf(QuestionType.LISTENING, QuestionType.MEANING, QuestionType.SPELLING))
+        val now = answeredAt
+        require(now > 0 && now <= System.currentTimeMillis())
+        val completedAt = System.currentTimeMillis()
+        val today = MainlineScheduler.dateKey(completedAt)
         val current = progressDao.getByWordId(wordId) ?: WordProgressEntity(wordId = wordId)
+        val exposed = exposedBeforeQuestion ?: SkillMemory.exposedOnDay(current.answerExposedAt, now)
         var next = MainlineScheduler.nextProgress(current, correct = correct, now = now, countWrong = true)
             .copy(
                 lastListenPass = listenPass ?: current.lastListenPass,
                 lastChinesePass = chinesePass ?: current.lastChinesePass,
             )
         if (listenPass != null && chinesePass != null) {
-            next = MainlineScheduler.classifyDual(next, listenPass, chinesePass, now).copy(
+            next = MainlineScheduler.classifyDual(next, listenPass, chinesePass, completedAt).copy(
                 mainlineClassifiedDate = today,
                 mainlineRemedyTestDate = if (kind == MainlineTestKind.REMEDY) today else next.mainlineRemedyTestDate,
                 mainlineDualDeferredDate = "",
             )
         }
         progressDao.upsert(next)
+        recordSkillEvidence(wordId, if (type == QuestionType.LISTENING) MemorySkill.LISTENING else MemorySkill.SPELLING,
+            correct, first = true, hinted = false,
+            source = if (kind == MainlineTestKind.NEW_WORDS) MemorySource.NEW_TEST else MemorySource.TEST,
+            form = if (type == QuestionType.LISTENING) "LISTEN" else "RECALL",
+            finalizeWord = listenPass != null && chinesePass != null, exposed = exposed, now = now)
         logAnswer(
             wordId = wordId,
             correct = correct,
-            type = type,
+            type = if (type == QuestionType.MEANING) QuestionType.SPELLING else type,
             dual = true,
             mainline = true,
             test = true,
             spellingQuality = spellingQuality,
-            progressState = next,
+            progressState = progressDao.getByWordId(wordId),
+            firstAttempt = true,
+            practiceForm = if (type == QuestionType.LISTENING) "LISTEN" else "RECALL",
+            memoryExposed = exposed,
+            timestamp = now,
         )
+        noteAnswerExposure(wordId)
     }
 
     suspend fun phoneticFor(word: WordEntity): Pair<String, String> {
@@ -1216,11 +1363,13 @@ class LearningRepository(
         practiceForm: String = "",
         eventKind: String = "answer",
         scheduleGrade: String = "",
+        memoryExposed: Boolean = false,
+        timestamp: Long = System.currentTimeMillis(),
     ) {
         logDao.insert(
             ReviewLogEntity(
                 wordId = wordId,
-                timestamp = System.currentTimeMillis(),
+                timestamp = timestamp,
                 correct = correct,
                 questionType = type.name,
                 isDual = dual,
@@ -1231,6 +1380,7 @@ class LearningRepository(
                 practiceForm = practiceForm,
                 eventKind = eventKind,
                 scheduleGrade = scheduleGrade,
+                memoryExposed = memoryExposed,
             ),
         )
         enqueueEvent(
@@ -1495,10 +1645,11 @@ class LearningRepository(
     suspend fun retentionProfile(): RetentionProfile = db.retentionProfileDao().get() ?: RetentionProfile()
 
     data class BackupSnapshot(val progress: List<WordProgressEntity>, val logs: List<ReviewLogEntity>,
-        val sessions: List<StudySessionEntity>, val profile: RetentionProfile)
+        val sessions: List<StudySessionEntity>, val profile: RetentionProfile,
+        val dualTests: List<DualTestSessionEntity> = emptyList())
 
     suspend fun backupSnapshot(): BackupSnapshot = db.withTransaction {
-        BackupSnapshot(progressDao.getAll(), logDao.getAll(), sessionDao.getAll(), retentionProfile())
+        BackupSnapshot(progressDao.getAll(), logDao.getAll(), sessionDao.getAll(), retentionProfile(), db.dualTestSessionDao().getAll())
     }
 
     suspend fun allProgress(): List<WordProgressEntity> = progressDao.getAll()
@@ -1519,7 +1670,9 @@ class LearningRepository(
 
     suspend fun findWordId(bookId: String, spelling: String): Long? {
         if (bookId.isBlank() || spelling.isBlank()) return null
-        return wordDao.findIdByBookAndSpelling(bookId, spelling)
+        val ids = wordDao.findIdsByBookAndSpelling(bookId, spelling)
+        require(ids.size <= 1) { "词书中有多个同名词，无法安全匹配：$spelling" }
+        return ids.singleOrNull()
     }
 
     /**
@@ -1530,6 +1683,7 @@ class LearningRepository(
         logs: List<ReviewLogEntity>,
         sessions: List<StudySessionEntity>? = null,
         retentionProfile: RetentionProfile = RetentionProfile(),
+        dualTests: List<DualTestSessionEntity> = emptyList(),
     ) {
         require(retentionProfile.isValid()) { "复习参数无效" }
         db.withTransaction {
@@ -1538,6 +1692,11 @@ class LearningRepository(
             logDao.clear()
             progressDao.upsertAll(progressItems)
             logDao.insertAll(logs.map { it.copy(id = 0) })
+            db.dualTestSessionDao().clear()
+            dualTests.forEach { item ->
+                // Invalidate writers belonging to a pre-restore ViewModel, while preserving the question/results.
+                db.dualTestSessionDao().save(item.checkpoint().copy(sessionId = UUID.randomUUID().toString()).entity())
+            }
             if (sessions != null) {
                 sessionDao.clear()
                 sessions.forEach { session ->

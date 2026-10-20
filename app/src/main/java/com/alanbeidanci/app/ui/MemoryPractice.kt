@@ -1,6 +1,10 @@
 package com.alanbeidanci.app.ui
 
 import com.alanbeidanci.app.data.RetentionGrade
+import com.alanbeidanci.app.data.MemorySkill
+import com.alanbeidanci.app.data.SkillMemory
+import com.alanbeidanci.app.data.SkillPracticePlan
+import com.alanbeidanci.app.data.WordProgressEntity
 
 /**
  * 新词：先看，再凭中文默写，并分别确认词义、听写、有例句时的填空。
@@ -63,6 +67,8 @@ data class SavedPractice(
     val firstResult: FirstResult = FirstResult.NONE,
     val abilities: AbilityMarks = AbilityMarks(),
     val hasSession: Boolean = false,
+    val skillMemory: String = "",
+    val plan: SkillPracticePlan? = null,
 )
 
 sealed class PracticeEffect {
@@ -97,6 +103,9 @@ data class MemoryState(
     val firstResult: FirstResult = FirstResult.NONE,
     val abilities: AbilityMarks = AbilityMarks(),
     val hasExample: Boolean = true,
+    val plan: SkillPracticePlan? = null,
+    // Separate from explicit help: practice can pass after exposure, long-term evidence cannot.
+    val exposed: Boolean = false,
 )
 
 data class PracticeQueue(
@@ -158,28 +167,40 @@ object MemoryPractice {
         val pending = wordIds.mapTo(mutableListOf()) { id ->
             val item = saved[id] ?: SavedPractice()
             val hasExample = examples[id] ?: true
-            if (item.hasSession) {
+            val eligiblePlan = item.plan?.copy(targets = item.plan.targets.filter {
+                it.skill != MemorySkill.CONTEXT || hasExample
+            })?.takeIf { it.targets.isNotEmpty() && it.pending() != null }
+            val plan = eligiblePlan ?: SkillPracticePlan.create(
+                SkillMemory.states(WordProgressEntity(wordId = id, skillMemory = item.skillMemory,
+                    abilityMeaning = item.abilities.meaning, abilityListening = item.abilities.listening,
+                    abilitySpelling = item.abilities.spelling, abilityContext = item.abilities.context), hasExample),
+                phase == PracticePhase.REVIEW, System.currentTimeMillis())
+            val opened = if (item.hasSession) {
                 restore(id, item, phase, hasExample)
             } else if (phase == PracticePhase.REVIEW) {
                 freshReview(id, item.abilities, hasExample)
             } else {
                 opening(id, 0).copy(hasExample = hasExample, abilities = normalize(item.abilities, hasExample))
             }
+            opened.copy(plan = plan, form = if ((!item.hasSession && phase == PracticePhase.REVIEW) ||
+                (item.form == PracticeForm.CLOZE && !hasExample))
+                formForSkill(plan.pending()!!.skill) else opened.form)
         }
         val showing = if (pending.isEmpty()) null else pending.removeAt(0)
         return PracticeQueue(showing, pending)
     }
 
     fun afterStudy(state: MemoryState): PracticeEffect.Show {
-        val probe = if (state.form == PracticeForm.STUDY) PracticeForm.RECALL else state.form
+        val probe = if (state.form == PracticeForm.STUDY) state.plan?.pending()?.skill?.let(::formForSkill) ?: PracticeForm.RECALL else state.form
         return PracticeEffect.Show(
-            state = state.copy(form = probe, studied = true, hinted = false),
+            state = state.copy(form = probe, studied = true, hinted = false, exposed = true),
             gap = 0,
             move = PracticeMove.INTRODUCE,
         )
     }
 
     fun afterCorrect(state: MemoryState, queueSize: Int = Int.MAX_VALUE): PracticeEffect {
+        if (state.plan != null) return plannedAnswer(state, true, queueSize)
         if (state.phase == PracticePhase.REVIEW) return afterReviewCorrect(state, queueSize)
         val independent = !state.hinted
         val abilities = state.abilities.record(state.form, independent, correct = true)
@@ -209,7 +230,8 @@ object MemoryPractice {
         )
     }
 
-    fun afterWrong(state: MemoryState): PracticeEffect {
+    fun afterWrong(state: MemoryState, gaveUp: Boolean = false): PracticeEffect {
+        if (state.plan != null) return plannedAnswer(state, false, Int.MAX_VALUE, gaveUp)
         val abilities = normalize(state.abilities.record(state.form, independent = true, correct = false), state.hasExample)
         if (state.phase == PracticePhase.REVIEW && state.firstResult == FirstResult.CORRECT) {
             return PracticeEffect.Graduate(shaky = false, grade = RetentionGrade.GOOD, abilities = abilities)
@@ -241,6 +263,60 @@ object MemoryPractice {
             letters.length == 2 -> "${letters.first()}·"
             else -> letters.first() + "·".repeat(letters.length - 2) + letters.last()
         }
+    }
+
+    fun formForSkill(skill: MemorySkill): PracticeForm = when (skill) {
+        MemorySkill.MEANING -> PracticeForm.PICK_MEANING
+        MemorySkill.LISTENING -> PracticeForm.LISTEN
+        MemorySkill.SPELLING -> PracticeForm.RECALL
+        MemorySkill.CONTEXT -> PracticeForm.CLOZE
+    }
+
+    private fun plannedAnswer(state: MemoryState, correct: Boolean, queueSize: Int, gaveUp: Boolean = false): PracticeEffect {
+        val plan = requireNotNull(state.plan)
+        val skill = MemorySkill.forForm(state.form.name) ?: return afterStudy(state)
+        val canonical = state.form == formForSkill(skill)
+        val independent = canonical && !state.hinted
+        val updated = if (canonical) plan.record(skill, correct, independent) else plan
+        val abilities = normalize(state.abilities.record(state.form, independent, correct), state.hasExample)
+        val first = when {
+            !correct && !state.hinted -> FirstResult.WRONG
+            state.hinted && state.firstResult != FirstResult.WRONG -> FirstResult.HINTED
+            state.phase == PracticePhase.REVIEW && state.exposed && state.firstResult == FirstResult.NONE -> FirstResult.HINTED
+            state.firstResult == FirstResult.NONE -> FirstResult.CORRECT
+            else -> state.firstResult
+        }
+        val next = state.copy(plan = updated, abilities = abilities, firstResult = first, hinted = false, exposed = true,
+            misses = state.misses + if (correct) 0 else 1,
+            cleanRecalls = state.cleanRecalls + if (correct && independent) 1 else 0)
+        if (!correct) {
+            val recognize = gaveUp || skill == MemorySkill.CONTEXT
+            val retryPlan = if (recognize) updated.preferMeaningRecognition() else updated
+            val retry = next.copy(
+                plan = retryPlan,
+                form = when {
+                    recognize -> PracticeForm.PICK_MEANING
+                    skill == MemorySkill.SPELLING -> PracticeForm.FADED
+                    else -> formForSkill(skill)
+                },
+            )
+            return if (retry.misses >= MISS_CAP) PracticeEffect.Park(retry, StopReason.FAILED)
+                else PracticeEffect.Show(retry, FAIL_GAP, reveal = true, move = PracticeMove.EASIER)
+        }
+        val pending = updated.targets.firstOrNull { it.passed < it.required && it.skill != skill } ?: updated.pending()
+        if (pending == null) {
+            val grade = if (state.phase == PracticePhase.LEARN) RetentionGrade.PRACTICE else when (first) {
+                FirstResult.WRONG -> RetentionGrade.LAPSE
+                FirstResult.HINTED -> RetentionGrade.RECHECK
+                else -> RetentionGrade.GOOD
+            }
+            return PracticeEffect.Graduate(first != FirstResult.CORRECT, grade, abilities)
+        }
+        val form = formForSkill(pending.skill)
+        val queued = next.copy(form = form)
+        if (form == state.form && queueSize == 0) return PracticeEffect.Defer(queued)
+        return PracticeEffect.Show(queued, if (form == state.form) SUCCESS_GAP else PROMOTE_GAP,
+            move = if (form == state.form) PracticeMove.AGAIN else PracticeMove.HARDER)
     }
 
     private fun afterReviewCorrect(state: MemoryState, queueSize: Int): PracticeEffect {

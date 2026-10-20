@@ -123,16 +123,19 @@ internal fun StatsReportContent(
             }
         }
         item {
-            Text("主线掌握维度", style = MaterialTheme.typography.titleLarge)
+            Text("分项练习与独立回忆", style = MaterialTheme.typography.titleLarge)
         }
         item {
             AppCard {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    MasteryDimensionRow("听音掌握度", "主线英文听写", report.listeningMastery)
-                    MasteryDimensionRow("词义掌握度", "主线中文提示写英文", report.meaningMastery)
-                    MasteryDimensionRow("拼写稳定度", "只记录准确、近似或未掌握等级", report.spellingStability, showNear = true)
+                    MasteryDimensionRow("听写练习正确率", "听英文后写词", report.listeningMastery)
+                    MasteryDimensionRow("词义练习正确率", "英文词选择中文意思", report.meaningMastery)
+                    MasteryDimensionRow("拼写练习正确率", "凭中文写英文；含旧双测中文轮", report.spellingStability)
+                    report.independentRecall.forEach { (skill, metric) ->
+                        MasteryDimensionRow("${skill.label}跨日首次回忆", "间隔至少24小时，首次且未暴露答案", metric)
+                    }
                     Text(
-                        "三项仅用于学习报告，不改变既定五步主线和复习排期。",
+                        "练习正确率包含修正练习；跨日首次回忆只统计新版合格证据。旧日志不会被改成独立回忆。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -187,7 +190,7 @@ private fun MasteryDimensionRow(
         )
         val near = if (showNear && metric.near > 0) " · 近似错误 ${metric.near}" else ""
         Text(
-            if (metric.total > 0) "准确 ${metric.correct}/${metric.total}$near" else "暂无主线双测记录",
+            if (metric.total > 0) "准确 ${metric.correct}/${metric.total}$near" else "暂无对应记录",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

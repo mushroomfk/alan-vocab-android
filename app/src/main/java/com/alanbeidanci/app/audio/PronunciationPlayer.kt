@@ -4,11 +4,15 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import com.alanbeidanci.app.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 
 class PronunciationPlayer(context: Context) {
     private data class SystemSpeech(
@@ -23,34 +27,83 @@ class PronunciationPlayer(context: Context) {
     private var mediaPlayer: MediaPlayer? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var ttsFailed = false
+    private var released = false
+    private val main = Handler(Looper.getMainLooper())
+    private var onlineTimeout: Runnable? = null
+    private var systemTimeout: Runnable? = null
+    private var onlineProblem: String? = null
     private var pendingSystemSpeech: SystemSpeech? = null
     private var playbackSequence = 0L
     private var noticeKey: String? = null
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice
+    private val _status = MutableStateFlow("点击试听，检查手机声音。")
+    val status: StateFlow<String> = _status
 
     init {
         tts = TextToSpeech(applicationContext) { status ->
-            ttsReady = status == TextToSpeech.SUCCESS
-            if (!ttsReady) {
-                pendingSystemSpeech = null
-                publishNotice("engine", "这台手机的语音引擎没有准备好，暂时无法朗读。")
-                return@TextToSpeech
-            }
-            pendingSystemSpeech?.also {
-                pendingSystemSpeech = null
-                speakWithSystem(it)
+            main.post {
+                if (!released) {
+                    ttsReady = status == TextToSpeech.SUCCESS
+                    ttsFailed = !ttsReady
+                    if (ttsReady) dispatchPending()
+                    else pendingSystemSpeech?.let { speechUnavailable(it) }
+                }
             }
         }
+        BundledEnglishSpeaker.warmUp(applicationContext)
     }
 
-    fun speak(text: String, accent: String = "us", rate: Float = 0.95f, chinese: Boolean = false) {
+    fun speak(text: String, accent: String = "us", rate: Float = 0.95f, chinese: Boolean = false, offlineOnly: Boolean = false) {
         val normalized = if (chinese) text.trim() else PronunciationAudio.normalize(text)
-        if (normalized.isBlank()) return
+        if (normalized.isBlank() || released) return
         stopCurrent()
-        val sequence = ++playbackSequence
+        clearNotice()
+        onlineProblem = null
+        val sequence = nextSequence.incrementAndGet()
+        playbackSequence = sequence
         val request = SystemSpeech(normalized, accent, rate.coerceIn(0.5f, 2f), chinese, sequence)
-        if (chinese || BuildConfig.LOCAL_ONLY) {
+        if (!request.chinese) {
+            if (offlineOnly) { speakBundled(request); return }
+            _status.value = "正在准备英文发音…"
+            val timeout = Runnable {
+                if (sequence == playbackSequence) {
+                    VolcengineSpeaker.cancel(sequence)
+                    onlineTimeout = null
+                    onlineProblem = "在线发音等待超过 3.5 秒"
+                    speakBundled(request)
+                }
+            }
+            onlineTimeout = timeout
+            main.postDelayed(timeout, ONLINE_WAIT_MS)
+            if (VolcengineSpeaker.speak(applicationContext, request.text, request.accent, request.rate, sequence,
+                onStarted = { if (sequence == playbackSequence) { clearOnlineTimeout(); playbackStarted("在线或缓存英文") } },
+                onFailure = { reason -> if (sequence == playbackSequence) {
+                    clearOnlineTimeout(); onlineProblem = reason; speakBundled(request)
+                } })) {
+                return
+            }
+            clearOnlineTimeout()
+            speakBundled(request)
+            return
+        }
+        _status.value = "正在准备中文语音…"
+        deliverWithoutBundledVoice(request)
+    }
+
+    private fun speakBundled(request: SystemSpeech) {
+        _status.value = onlineProblem?.let { "$it，正在准备离线英文…" } ?: "正在准备离线英文…"
+        BundledEnglishSpeaker.speak(applicationContext, request.text, request.accent, request.rate, request.sequence,
+            onStarted = { if (request.sequence == playbackSequence) {
+                playbackStarted("离线英文")
+                onlineProblem?.let { _status.value = "$it；离线英文已开始播放。" }
+            } },
+            onFailure = { if (request.sequence == playbackSequence) deliverWithoutBundledVoice(request) })
+    }
+
+    private fun deliverWithoutBundledVoice(request: SystemSpeech) {
+        if (request.chinese || BuildConfig.LOCAL_ONLY) {
             speakWithSystem(request)
             return
         }
@@ -64,9 +117,9 @@ class PronunciationPlayer(context: Context) {
                     .setUsage(AudioAttributes.USAGE_MEDIA)
                     .build(),
             )
-            player.setDataSource(BuildConfig.API_BASE_URL + PronunciationAudio.path(normalized, accent))
+            player.setDataSource(BuildConfig.API_BASE_URL + PronunciationAudio.path(request.text, request.accent))
             player.setOnPreparedListener { prepared ->
-                if (sequence != playbackSequence) {
+                if (request.sequence != playbackSequence) {
                     releasePlayer(prepared)
                     return@setOnPreparedListener
                 }
@@ -80,31 +133,50 @@ class PronunciationPlayer(context: Context) {
             player.setOnCompletionListener { completed -> releasePlayer(completed) }
             player.setOnErrorListener { failed, _, _ ->
                 releasePlayer(failed)
-                if (sequence == playbackSequence) speakWithSystem(request)
+                if (request.sequence == playbackSequence) speakWithSystem(request)
                 true
             }
             player.prepareAsync()
         } catch (_: Exception) {
             releasePlayer(player)
-            if (sequence == playbackSequence) speakWithSystem(request)
+            if (request.sequence == playbackSequence) speakWithSystem(request)
         }
     }
 
     fun release() {
-        playbackSequence += 1
         stopCurrent()
+        playbackSequence = nextSequence.incrementAndGet()
+        released = true
         tts?.shutdown()
         tts = null
         ttsReady = false
     }
 
+    fun stop() {
+        stopCurrent()
+        playbackSequence = nextSequence.incrementAndGet()
+    }
+
+    private fun dispatchPending() {
+        val request = pendingSystemSpeech ?: return
+        if (engineFor() == null) return
+        pendingSystemSpeech = null
+        speakWithSystem(request)
+    }
+
+    private fun engineFor(): TextToSpeech? = if (ttsReady) tts else null
+
     private fun speakWithSystem(request: SystemSpeech) {
         if (request.sequence != playbackSequence) return
-        val engine = tts
-        if (!ttsReady || engine == null) {
+        val engine = engineFor()
+        if (engine == null) {
+            if (ttsFailed) { speechUnavailable(request); return }
+            _status.value = "正在启动${if (request.chinese) "中文" else "系统英文"}语音…"
             pendingSystemSpeech = request
+            armSystemTimeout(request)
             return
         }
+        clearSystemTimeout()
         val requested = when {
             request.chinese -> Locale.SIMPLIFIED_CHINESE
             request.accent == "uk" -> Locale.UK
@@ -133,16 +205,94 @@ class PronunciationPlayer(context: Context) {
                     "这台手机没有英语语音，听写暂时听不到发音。请到系统设置安装文字转语音。"
                 },
             )
+            _status.value = _notice.value.orEmpty()
+            return
         } else if (!usedFallback) {
             clearNotice()
         }
+        val chosenVoice = if (request.chinese) null else applyBestVoice(engine, requested, offlineOnly = false)
+        engine.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
         engine.setSpeechRate(request.rate)
         engine.setPitch(1f)
+        engine.setOnUtteranceProgressListener(utteranceListener(engine, request, requested, chosenVoice))
         val params = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1f) }
-        val spoken = engine.speak(request.text, TextToSpeech.QUEUE_FLUSH, params, "alan-pronunciation-${request.sequence}")
+        val utteranceId = "alan-pronunciation-${request.sequence}"
+        val spoken = engine.speak(request.text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+        armSystemTimeout(request)
         if (spoken == TextToSpeech.ERROR && languageResult >= TextToSpeech.LANG_AVAILABLE) {
-            publishNotice("speak", "刚才没有读出来。可以再点一次喇叭，或到系统设置检查文字转语音。")
+            systemFailed(request)
         }
+    }
+
+    private fun utteranceListener(
+        engine: TextToSpeech,
+        request: SystemSpeech,
+        locale: Locale,
+        usedVoiceId: String?,
+    ) = object : UtteranceProgressListener() {
+        override fun onStart(utteranceId: String?) {
+            main.post { if (request.sequence == playbackSequence) {
+                clearSystemTimeout()
+                playbackStarted(if (request.chinese) "中文语音" else "系统英文")
+            } }
+        }
+
+        override fun onDone(utteranceId: String?) {
+            main.post { if (request.sequence == playbackSequence) { clearSystemTimeout(); _status.value = "播放结束。" } }
+        }
+
+        @Deprecated("使用带错误码的 onError")
+        override fun onError(utteranceId: String?) {
+            onError(utteranceId, TextToSpeech.ERROR)
+        }
+
+        override fun onError(utteranceId: String?, errorCode: Int) {
+            main.post { handleError(errorCode) }
+        }
+
+        private fun handleError(errorCode: Int) {
+            if (request.sequence != playbackSequence) return
+            clearSystemTimeout()
+            if (request.chinese) { systemFailed(request); return }
+            val offline = applyBestVoice(engine, locale, offlineOnly = true)
+            if (offline == null || offline == usedVoiceId) {
+                systemFailed(request)
+                return
+            }
+            engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) = Unit
+                override fun onDone(utteranceId: String?) = Unit
+                @Deprecated("使用带错误码的 onError")
+                override fun onError(utteranceId: String?) {
+                    main.post { if (request.sequence == playbackSequence) systemFailed(request) }
+                }
+                override fun onError(utteranceId: String?, errorCode: Int) { onError(utteranceId) }
+            })
+            val params = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1f) }
+            engine.speak(request.text, TextToSpeech.QUEUE_FLUSH, params, "alan-pronunciation-${request.sequence}-local")
+        }
+    }
+
+    private fun applyBestVoice(engine: TextToSpeech, locale: Locale, offlineOnly: Boolean): String? {
+        val chosen = runCatching {
+            val voices = engine.voices.orEmpty().map { voice ->
+                PronunciationAudio.VoiceCandidate(
+                    id = voice.name,
+                    language = voice.locale?.language.orEmpty(),
+                    country = voice.locale?.country.orEmpty(),
+                    quality = voice.quality,
+                    latency = voice.latency,
+                    requiresNetwork = voice.isNetworkConnectionRequired,
+                )
+            }.filter { voice -> !offlineOnly || !voice.requiresNetwork }
+            val language = if (locale.language.isNullOrEmpty()) Locale.US.language else locale.language
+            PronunciationAudio.chooseVoice(voices, language, locale.country.orEmpty())
+        }.getOrNull() ?: return null
+        runCatching {
+            engine.voices?.firstOrNull { it.name == chosen.id }?.let { engine.voice = it }
+        }
+        return chosen.id
     }
 
     private fun publishNotice(key: String, message: String) {
@@ -158,9 +308,44 @@ class PronunciationPlayer(context: Context) {
     }
 
     private fun stopCurrent() {
+        clearOnlineTimeout()
+        clearSystemTimeout()
         pendingSystemSpeech = null
+        VolcengineSpeaker.cancel(playbackSequence)
+        BundledEnglishSpeaker.cancel(playbackSequence)
         tts?.stop()
         mediaPlayer?.let(::releasePlayer)
+    }
+
+    private fun clearOnlineTimeout() { onlineTimeout?.let(main::removeCallbacks); onlineTimeout = null }
+    private fun clearSystemTimeout() { systemTimeout?.let(main::removeCallbacks); systemTimeout = null }
+
+    private fun armSystemTimeout(request: SystemSpeech) {
+        clearSystemTimeout()
+        systemTimeout = Runnable {
+            if (request.sequence == playbackSequence) {
+                pendingSystemSpeech = null
+                tts?.stop()
+                systemFailed(request)
+            }
+        }.also { main.postDelayed(it, 8000) }
+    }
+
+    private fun playbackStarted(source: String) { clearNotice(); _status.value = "$source 已开始播放。" }
+    private fun speechUnavailable(request: SystemSpeech) {
+        pendingSystemSpeech = null
+        clearSystemTimeout()
+        val message = if (request.chinese) "中文语音服务未能启动，请在手机系统的文字转语音设置中启用或安装中文语音。"
+            else "这台手机的语音服务未能启动，请检查系统文字转语音设置。"
+        publishNotice("engine", message)
+        _status.value = message
+    }
+    private fun systemFailed(request: SystemSpeech) {
+        clearSystemTimeout()
+        val message = if (request.chinese) "中文语音没有播放成功，请在系统文字转语音设置中试听，并检查中文语音包是否已下载。"
+            else "英文语音没有播放成功，请检查媒体音量及手机的语音服务。"
+        publishNotice("speak", message)
+        _status.value = message
     }
 
     private fun releasePlayer(player: MediaPlayer) {
@@ -171,6 +356,8 @@ class PronunciationPlayer(context: Context) {
     }
 
     private companion object {
+        val nextSequence = AtomicLong(0L)
+        const val ONLINE_WAIT_MS = 3500L
         const val RECORDED_RATE = 0.95f
     }
 }

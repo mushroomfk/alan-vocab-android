@@ -27,7 +27,7 @@ import com.alanbeidanci.app.ui.components.AppCard
 fun PrivacyScreen(onBack: () -> Unit) {
     LegalPage(title = "隐私说明", onBack = onBack) {
         LegalSection("本机使用") {
-            LegalPoint("这一版不注册、不登录，也不连接服务器。")
+            LegalPoint("这一版不注册、不登录，学习记录和设置保存在本机，不向 Alan 服务器同步。英文发音可能访问火山引擎。")
             LegalPoint("不收集手机号、邮箱或账号密码。")
         }
         LegalSection("保存的数据") {
@@ -35,18 +35,18 @@ fun PrivacyScreen(onBack: () -> Unit) {
             LegalPoint("词库与学习数据库不进入标准云备份，内置示例词库可重新导入。学习进度请在「我的」里导出；换机传输可以带走本机数据库。")
             LegalPoint("应用不包含广告或第三方行为分析 SDK。")
         }
-        LegalSection("查词、拍照与系统能力") {
+        LegalSection("查词、拍照识词与系统能力") {
             LegalPoint("中文或英文查词只查询本机词库，不会把查询内容发出去。")
-            LegalPoint("相机仅在你主动打开拍照查词时申请权限；图像在设备上识别，不上传图像。")
-            LegalPoint("发音使用设备上的语音引擎。有的引擎需要联网，是否联网取决于你选择的语音包。")
+            LegalPoint("相机仅在你主动打开拍照识词时申请权限；图像在设备上识别，不上传图像。")
+            LegalPoint("你在设置中填写自己的火山引擎 API Key 后，有网时未缓存的英文单词会发给火山引擎合成发音。Key 仅在本机加密保存，不进入 JSON 或系统备份。未配置、断网或请求失败时使用安装包里的 Piper；已有发音缓存仍可使用。中文释义由设备语音引擎朗读。")
             LegalPoint("通知权限仅用于按你设置的时间发送本地学习提醒，可随时在应用或系统设置中关闭。")
         }
         LegalSection("导出与删除") {
-            LegalPoint("你可以从“我的”导出或恢复 JSON 备份，里面包含设置、进度、作答记录、学习时长和个人复习参数。主动分享后的文件由所选目标应用处理。")
+            LegalPoint("你可以从“我的”导出或恢复 JSON 备份，里面包含设置、进度、作答记录和学习时长。主动分享后的文件由所选目标应用处理。")
             LegalPoint("清除应用数据或卸载即可删除本机记录。")
         }
         Text(
-            "更新日期：2026 年 10 月 13 日",
+            "更新日期：2026 年 10 月 17 日",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

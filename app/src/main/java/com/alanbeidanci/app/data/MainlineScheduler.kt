@@ -48,6 +48,7 @@ data class MainlinePlan(
     val consolidationDoneToday: Int = 0,
     val newWordTestDoneToday: Int = 0,
     val newWordCap: Int = 0,
+    val extraNewWordCount: Int = 0,
 ) {
     val currentWords: List<WordEntity>
         get() = when (step) {
@@ -182,6 +183,27 @@ object MainlineScheduler {
         return minOf(dailyGoal.coerceIn(1, 100), byTime)
     }
 
+    /**
+     * 设定时长只决定今天先排多少。超时后的下一批按同样的固定时长再排，不再扣到期词。
+     * 已经学过或这次会话里已经出现的词不重复进入。
+     */
+    fun extraLearnWords(
+        words: List<WordEntity>,
+        progressItems: List<WordProgressEntity>,
+        settings: UserSettings,
+        excludeIds: Set<Long> = emptySet(),
+        now: Long = System.currentTimeMillis(),
+        pace: StudyPace = StudyPace(),
+    ): List<WordEntity> {
+        val progress = progressItems.associateBy { it.wordId }
+        val today = dateKey(now)
+        val batch = newWordCap(settings.dailyGoal, settings.dailyMinutes, 0, 0, pace).coerceAtLeast(1)
+        return scopedWords(words, settings).filter { word ->
+            val item = progress[word.id]
+            word.id !in excludeIds && (item?.attempts ?: 0) == 0 && item?.mainlineLearnedDate != today
+        }.take(batch)
+    }
+
     /** 近 14 天、至少 3 个完成词才替换默认用时，避免一次特别慢或特别快把计划带偏。 */
     fun paceFromSessions(sessions: List<StudySessionEntity>, now: Long = System.currentTimeMillis()): StudyPace {
         val cutoff = now - 14L * 24 * 60 * 60 * 1000
@@ -203,7 +225,7 @@ object MainlineScheduler {
         val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
         val due = Instant.ofEpochMilli(dueAt).atZone(zone).toLocalDate()
         val days = java.time.temporal.ChronoUnit.DAYS.between(today, due)
-        return days.toInt().coerceAtLeast(1)
+        return days.toInt().coerceAtLeast(0)
     }
 
     fun dueAfterDays(now: Long, days: Int, zone: ZoneId = ZoneId.systemDefault()): Long =
@@ -309,9 +331,8 @@ object MainlineScheduler {
         val learnedToday = progressItems.count { it.wordId in byId && it.mainlineLearnedDate == today }
         val todayNewWordCap = newWordCap(settings.dailyGoal, settings.dailyMinutes, consolidation.size, review.size, pace)
         val remainingGoal = (todayNewWordCap - learnedToday).coerceAtLeast(0)
-        val learn = scoped
-            .filter { (progress[it.id]?.attempts ?: 0) == 0 }
-            .take(remainingGoal)
+        val unseen = scoped.filter { (progress[it.id]?.attempts ?: 0) == 0 }
+        val learn = unseen.take(remainingGoal)
         val step = when {
             review.isNotEmpty() -> MainlineStep.REVIEW
             remedyTest.isNotEmpty() -> MainlineStep.REMEDY_TEST
@@ -349,6 +370,7 @@ object MainlineScheduler {
                     !it.mainlineDualPending
             },
             newWordCap = todayNewWordCap,
+            extraNewWordCount = (unseen.size - learn.size).coerceAtLeast(0),
         )
     }
 
@@ -469,5 +491,5 @@ object MainlineScheduler {
     }
 
     fun blankExample(example: String, spelling: String): String =
-        if (example.isBlank()) "" else example.replace(Regex("(?i)\\b${Regex.escape(spelling)}\\b"), "____")
+        ClozeQuestion.create(example, spelling)?.prompt.orEmpty()
 }

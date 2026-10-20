@@ -1,6 +1,7 @@
 package com.alanbeidanci.app
 
 import android.app.Application
+import com.alanbeidanci.app.audio.BundledEnglishSpeaker
 import com.alanbeidanci.app.data.AlanDatabase
 import com.alanbeidanci.app.data.RetentionPersonalization
 import com.alanbeidanci.app.notifications.RetentionTrainingScheduler
@@ -36,6 +37,7 @@ class AlanVocabApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        BundledEnglishSpeaker.warmUp(this)
         ReminderScheduler.createChannel(this)
         RetentionTrainingScheduler.schedule(this)
         applicationScope.launch {

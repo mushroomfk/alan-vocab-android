@@ -12,7 +12,12 @@ class BackupManager(
     suspend fun exportJson(): String {
         val settings = preferences.snapshot()
         val snapshot = repository.backupSnapshot()
-        val identities = repository.wordIdentities(snapshot.progress.map { it.wordId })
+        val wordIds = buildSet {
+            addAll(snapshot.progress.map { it.wordId })
+            addAll(snapshot.logs.map { it.wordId })
+            snapshot.dualTests.forEach { addAll(it.checkpoint().wordIds) }
+        }
+        val identities = repository.wordIdentities(wordIds)
         val progressArray = JSONArray()
         snapshot.progress.forEach { item ->
             val word = identities[item.wordId]
@@ -39,7 +44,11 @@ class BackupManager(
                     .put("memoryBeforeDifficulty", item.memoryBeforeDifficulty)
                     .put("memoryPreviousReviewAt", item.memoryPreviousReviewAt)
                     .put("memoryIndependent", item.memoryIndependent)
-                    .put("memoryModelRevision", item.memoryModelRevision),
+                    .put("memoryModelRevision", item.memoryModelRevision)
+                    .put("memorySkill", item.memorySkill)
+                    .put("memoryWeight", item.memoryWeight)
+                    .put("memorySource", item.memorySource)
+                    .put("memoryExposed", item.memoryExposed),
             )
         }
         val sessionsArray = JSONArray()
@@ -59,7 +68,12 @@ class BackupManager(
         }
         return JSONObject()
             .put("app", "Alan背单词")
-            .put("formatVersion", 3)
+            .put("formatVersion", 5)
+            // Additive v5 metadata also identifies words present only in logs or a pending test.
+            .put("wordIdentities", JSONArray(identities.values.sortedBy { it.id }.map { word -> JSONObject()
+                .put("wordId", word.id).put("bookId", word.bookId).put("spelling", word.word) }))
+            .put("dualTests", JSONArray(snapshot.dualTests.map { item -> JSONObject()
+                .put("key", item.key).put("kind", item.kind).put("checkpoint", JSONObject(item.payload)) }))
             .put("retentionProfile", RetentionProfileJson.encode(snapshot.profile))
             .put("dictionaryVersion", repository.dictionaryVersion())
             .put("exportedAt", System.currentTimeMillis())
@@ -90,12 +104,12 @@ class BackupManager(
         val previous = repository.backupSnapshot()
         val previousSettings = preferences.snapshot()
         try {
-            repository.restore(plan.progress, plan.logs, plan.sessions, plan.profile)
+            repository.restore(plan.progress, plan.logs, plan.sessions, plan.profile, plan.dualTests)
             plan.settings?.let { preferences.restoreLearningSettings(it) }
         } catch (error: Exception) {
             withContext(NonCancellable) {
                 runCatching {
-                    repository.restore(previous.progress, previous.logs, previous.sessions, previous.profile)
+                    repository.restore(previous.progress, previous.logs, previous.sessions, previous.profile, previous.dualTests)
                     preferences.restoreLearningSettings(previousSettings)
                 }.onFailure { error.addSuppressed(it) }
             }
@@ -106,27 +120,55 @@ class BackupManager(
     private suspend fun parse(content: String): RestorePlan {
         val root = JSONObject(content)
         val version = root.optInt("formatVersion")
-        require(version in 1..3) { "不支持的备份版本" }
+        require(version in 1..5) { "不支持的备份版本" }
         val validWordIds = repository.allWordIds()
         val validBookIds = repository.allBookIds()
+        if (version >= 5) {
+            root.getJSONArray("sessions")
+            root.getJSONObject("settings")
+        }
         val progressArray = root.getJSONArray("progress")
+        val identities = linkedMapOf<Long, Pair<String, String>>()
+        fun identify(item: JSONObject) {
+            val book = item.optString("bookId")
+            val spelling = item.optString("spelling")
+            if (book.isBlank() && spelling.isBlank()) return // Legacy backups may contain numeric IDs only.
+            require(book.isNotBlank() && spelling.isNotBlank()) { "备份词条身份不完整" }
+            val id = item.getLong("wordId")
+            val identity = book to spelling
+            require(id > 0 && (identities[id] == null || identities[id] == identity)) { "备份词条身份冲突" }
+            identities[id] = identity
+        }
+        (if (root.has("wordIdentities")) root.getJSONArray("wordIdentities") else null)?.let { rows ->
+            for (i in 0 until rows.length()) identify(rows.getJSONObject(i))
+        }
+        for (i in 0 until progressArray.length()) identify(progressArray.getJSONObject(i))
+        val currentIdentities = repository.wordIdentities(identities.keys)
+        val resolvedIds = mutableMapOf<Long, Long>()
+        suspend fun resolve(id: Long): Long {
+            resolvedIds[id]?.let { return it }
+            val identity = identities[id]
+            val current = currentIdentities[id]
+            val resolved = if (identity == null) id.takeIf { it in validWordIds }
+                else if (current?.bookId == identity.first && current.word.equals(identity.second, ignoreCase = true)) id
+                else repository.findWordId(identity.first, identity.second)
+            requireNotNull(resolved) { "备份中有无法匹配的词条，未恢复任何数据：${identity?.second ?: id}" }
+            resolvedIds[id] = resolved
+            return resolved
+        }
         val progressItems = buildList {
             for (index in 0 until progressArray.length()) {
                 val item = progressArray.getJSONObject(index)
-                val wordId = item.optLong("wordId")
-                val resolved = when {
-                    wordId in validWordIds -> wordId
-                    else -> repository.findWordId(item.optString("bookId"), item.optString("spelling"))
-                } ?: continue
+                val resolved = resolve(item.getLong("wordId"))
                 add(progressFrom(item, resolved))
             }
         }
+        require(progressItems.map { it.wordId }.distinct().size == progressItems.size) { "多条进度对应同一个词，未恢复任何数据" }
         val logArray = root.getJSONArray("logs")
         val logItems = buildList {
             for (index in 0 until logArray.length()) {
                 val item = logArray.getJSONObject(index)
-                val wordId = item.getLong("wordId")
-                if (wordId !in validWordIds) continue
+                val wordId = resolve(item.getLong("wordId"))
                 add(
                     ReviewLogEntity(
                         wordId = wordId,
@@ -147,7 +189,14 @@ class BackupManager(
                         memoryPreviousReviewAt = item.optLong("memoryPreviousReviewAt"),
                         memoryIndependent = item.optBoolean("memoryIndependent"),
                         memoryModelRevision = item.optInt("memoryModelRevision"),
-                    ),
+                        memorySkill = item.optString("memorySkill"),
+                        memoryWeight = item.optDouble("memoryWeight", 1.0),
+                        memorySource = item.optString("memorySource"),
+                        memoryExposed = item.optBoolean("memoryExposed"),
+                    ).also {
+                        require(it.memoryWeight.isFinite() && it.memoryWeight in 0.0..1.0) { "复习证据权重无效" }
+                        require(it.memorySkill.isBlank() || it.memorySkill in MemorySkill.entries.map { skill -> skill.name }) { "复习分项无效" }
+                    },
                 )
             }
         }
@@ -211,8 +260,22 @@ class BackupManager(
                 reminderHour = item.optInt("reminderHour", current.reminderHour).coerceIn(0, 23),
             )
         }
-        val profile = if (version == 3) RetentionProfileJson.decode(root.getJSONObject("retentionProfile")) else RetentionProfile()
-        return RestorePlan(progressItems, logItems, sessions, settings, profile)
+        val profile = if (version >= 3) RetentionProfileJson.decode(root.getJSONObject("retentionProfile")) else RetentionProfile()
+        val checkpoints = if (version >= 5) root.getJSONArray("dualTests").let { rows ->
+            (0 until rows.length()).map { index ->
+                val o = rows.getJSONObject(index)
+                val cp = DualTestSessionEntity(o.getString("key"), o.getString("kind"), o.getJSONObject("checkpoint").toString()).checkpoint()
+                val mapping = cp.wordIds.associateWith { resolve(it) }
+                require(mapping.values.distinct().size == cp.wordIds.size) { "双测断点有词条重复匹配" }
+                cp.copy(wordIds = cp.wordIds.map { mapping.getValue(it) },
+                    listening = cp.listening.mapKeys { mapping.getValue(it.key) },
+                    spelling = cp.spelling.mapKeys { mapping.getValue(it.key) }).entity()
+            }.also { require(it.map { row -> row.key }.distinct().size == it.size) { "双测断点重复" } }
+        } else emptyList()
+        val exposureByWord = logItems.groupBy { it.wordId }.mapValues { (_, rows) -> rows.maxOf { it.timestamp } }
+        val migratedProgress = if (version < 5) progressItems.map { row -> row.copy(answerExposedAt =
+            maxOf(row.practiceSavedAt, row.lastReviewedAt, exposureByWord[row.wordId] ?: 0).coerceAtLeast(0)) } else progressItems
+        return RestorePlan(migratedProgress, logItems, sessions, settings, profile, checkpoints)
     }
 
     private fun progressJson(item: WordProgressEntity, bookId: String, spelling: String): JSONObject =
@@ -256,6 +319,10 @@ class BackupManager(
             .put("abilityListening", item.abilityListening)
             .put("abilitySpelling", item.abilitySpelling)
             .put("abilityContext", item.abilityContext)
+            .put("skillMemory", item.skillMemory)
+            .put("practicePlan", item.practicePlan)
+            .put("practiceSavedAt", item.practiceSavedAt)
+            .put("answerExposedAt", item.answerExposedAt)
 
     private fun progressFrom(item: JSONObject, wordId: Long) = WordProgressEntity(
         wordId = wordId,
@@ -295,6 +362,10 @@ class BackupManager(
         abilityListening = item.optInt("abilityListening"),
         abilitySpelling = item.optInt("abilitySpelling"),
         abilityContext = item.optInt("abilityContext"),
+        skillMemory = item.optString("skillMemory").also { SkillMemory.decode(it) },
+        practicePlan = item.optString("practicePlan").also { SkillPracticePlan.decode(it) },
+        practiceSavedAt = item.optLong("practiceSavedAt").also { require(it >= 0) },
+        answerExposedAt = item.optLong("answerExposedAt").also { require(it >= 0) },
     )
 
     private fun Double.finiteOrZero(): Double = if (isFinite()) this else 0.0
@@ -308,5 +379,6 @@ class BackupManager(
         val sessions: List<StudySessionEntity>,
         val settings: UserSettings?,
         val profile: RetentionProfile,
+        val dualTests: List<DualTestSessionEntity>,
     )
 }

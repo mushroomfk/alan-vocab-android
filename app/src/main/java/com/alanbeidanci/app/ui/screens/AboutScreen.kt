@@ -55,7 +55,7 @@ fun AboutScreen(onBack: () -> Unit) {
                 Text("产品与数据说明", style = MaterialTheme.typography.titleLarge)
                 AboutPoint("专为记单词设计的原生 Android 应用。开源代码与示例词书采用 MIT 许可。")
                 AboutPoint("开源版附带 40 词原创示例，体验学习、双测与复习流程；不含原版第三方词库。")
-                AboutPoint("这一版不登录、不连服务器。词库、学习进度和设置都保存在本机，发音使用手机自带语音。")
+                AboutPoint("这一版不登录、不连服务器。词库、学习进度和设置都保存在本机。英文发音优先用本机缓存；在设置里填写自己的火山引擎 Key 后，有网时联网合成并缓存；否则用安装包里的 Piper 离线语音。")
                 AboutPoint("当前不包含广告或第三方行为分析 SDK。")
             }
         }

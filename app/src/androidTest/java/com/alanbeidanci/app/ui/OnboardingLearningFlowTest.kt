@@ -59,6 +59,7 @@ class OnboardingLearningFlowTest {
                     HomeScreen(
                         container = application.container,
                         onStartMainline = {},
+                        onContinueLearning = {},
                         onBooks = {},
                     )
                 }

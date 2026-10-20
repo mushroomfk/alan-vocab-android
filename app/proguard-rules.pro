@@ -1,3 +1,4 @@
+-keep class com.k2fsa.sherpa.onnx.** { *; }
 -keep class androidx.room.RoomDatabase { *; }
 -keep @androidx.room.Entity class * { *; }
 
@@ -11,3 +12,4 @@
 -keep class com.google.mlkit.vision.text.internal.** { *; }
 -keep class com.google.android.gms.internal.mlkit_vision_text.** { *; }
 -keep class com.google.android.gms.internal.mlkit_vision_text_common.** { *; }
+

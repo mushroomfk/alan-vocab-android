@@ -21,3 +21,7 @@ dist/
 *.key
 .env
 .env.*
+
+# Kokoro 模型超过 GitHub 100MB 限制，不提交。
+app/src/main/assets/tts/kokoro/model.onnx
+.claude/

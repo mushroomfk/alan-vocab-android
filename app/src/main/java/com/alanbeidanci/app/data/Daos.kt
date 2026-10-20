@@ -125,8 +125,8 @@ interface WordDao {
     @Query("SELECT COUNT(*) FROM words WHERE bookId = :bookId")
     suspend fun countByBook(bookId: String): Int
 
-    @Query("SELECT id FROM words WHERE bookId = :bookId AND word = :spelling COLLATE NOCASE LIMIT 1")
-    suspend fun findIdByBookAndSpelling(bookId: String, spelling: String): Long?
+    @Query("SELECT id FROM words WHERE bookId = :bookId AND word = :spelling COLLATE NOCASE LIMIT 2")
+    suspend fun findIdsByBookAndSpelling(bookId: String, spelling: String): List<Long>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(items: List<WordEntity>)

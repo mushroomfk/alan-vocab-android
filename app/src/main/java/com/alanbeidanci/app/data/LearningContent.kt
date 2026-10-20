@@ -25,6 +25,12 @@ data class LearningContent(
 
 /** Resolves the same reviewed learning content used by the Web client. */
 object LearningContentPresentation {
+    fun clozeFor(context: Context, word: WordEntity): ClozeQuestion? {
+        val content = forWord(context, word)
+        return listOf(content.coreExample, content.contextExample, word.example)
+            .firstNotNullOfOrNull { ClozeQuestion.create(it, word.word) }
+    }
+
     @Volatile
     private var cachedContent: JSONObject? = null
 

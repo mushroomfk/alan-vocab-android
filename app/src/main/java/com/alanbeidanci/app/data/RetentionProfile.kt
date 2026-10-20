@@ -12,7 +12,8 @@ data class RetentionParameters(val gain: Double = 1.54575, val lapse: Double = 1
     fun isValid(): Boolean = gain.isFinite() && lapse.isFinite() && gain in 0.9..2.2 && lapse in 1.0..3.0
 
     companion object {
-        const val ALGORITHM = "alan-fsrs5-calibration-v1"
+        const val ALGORITHM = "alan-fsrs5-calibration-v2"
+        const val LEGACY_ALGORITHM = "alan-fsrs5-calibration-v1"
     }
 }
 
@@ -38,6 +39,12 @@ data class RetentionProfile(
 ) {
     fun parameters(): RetentionParameters = RetentionParameters(gain, lapse)
     fun previousParameters(): RetentionParameters = RetentionParameters(previousGain, previousLapse)
+    /** Preserve both parameter sets; old evidence is retained but not reinterpreted by v2 fitting. */
+    fun upgradeLegacy(): RetentionProfile = if (algorithm == RetentionParameters.LEGACY_ALGORITHM) copy(
+        algorithm = RetentionParameters.ALGORITHM, lastAttemptAt = 0, lastAttemptThrough = 0,
+        trainedThrough = 0, activatedAt = 0, sampleCount = 0, status = "COLLECTING",
+        candidateLoss = -1.0, baselineLoss = -1.0,
+    ) else this
     fun isValid(): Boolean = id == 1 && algorithm == RetentionParameters.ALGORITHM &&
         parameters().isValid() && previousParameters().isValid() && revision >= 0 &&
         candidateLoss.isFinite() && baselineLoss.isFinite() && sampleCount >= 0 &&

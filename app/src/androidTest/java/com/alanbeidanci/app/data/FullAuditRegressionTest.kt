@@ -125,8 +125,8 @@ class FullAuditRegressionTest {
     @Test
     fun dictionaryVersionUpdateMustKeepSitcomProgress() = runBlocking {
         val app = context as AlanVocabApplication
-        val source = app.container.repository.getBook("friends-daily")!!
-        val sitcomWord = app.container.repository.getWords(setOf("friends-daily")).first()
+        val source = app.container.repository.getBook("demo-daily")!!
+        val sitcomWord = app.container.repository.getWords(setOf("demo-daily")).first()
         db.wordBookDao().insert(source)
         db.wordDao().insert(sitcomWord)
         db.progressDao().upsert(WordProgressEntity(sitcomWord.id, attempts = 3, isFavorite = true))

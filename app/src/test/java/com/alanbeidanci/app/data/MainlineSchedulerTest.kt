@@ -246,6 +246,15 @@ class MainlineSchedulerTest {
             now = now,
         )
         assertEquals(5, open.learnWords.size)
+        assertTrue(crowded.extraNewWordCount > crowded.learnWords.size)
+        val extra = MainlineScheduler.extraLearnWords(
+            words,
+            due,
+            settings.copy(dailyGoal = 20, dailyMinutes = 20),
+            now = now,
+        )
+        assertEquals(5, extra.size)
+        assertTrue(extra.none { it.id <= 15L })
 
         val forgotten = progress(1).copy(
             category = "relearn",
@@ -337,9 +346,9 @@ class MainlineSchedulerTest {
 
     @Test
     fun unitFilterKeepsOtherBooksWhenOnlyOneBookHasUnits() {
-        val first = word(1, "cancel").copy(bookId = "demo-basics", unitId = "unit-a")
+        val first = word(1, "cancel").copy(bookId = "cet4", unitId = "unit-a")
         val other = word(2, "apple").copy(bookId = "cet6", unitId = "unit-b")
-        val scoped = UserSettings(selectedBookIds = setOf("demo-basics", "cet6"), selectedUnitKeys = setOf("cet4::unit-a"))
+        val scoped = UserSettings(selectedBookIds = setOf("cet4", "cet6"), selectedUnitKeys = setOf("cet4::unit-a"))
         val plan = MainlineScheduler.plan(listOf(first, other), emptyList(), scoped)
         assertEquals(2, plan.totalWords)
     }

@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -5,7 +7,16 @@ plugins {
 }
 
 val alanMinSdk = providers.gradleProperty("alanMinSdk").orNull?.toIntOrNull() ?: 26
-val alanVersionName = providers.gradleProperty("alanVersionName").orNull ?: "1.6.7-oss"
+val alanVersionName = providers.gradleProperty("alanVersionName").orNull ?: "1.6.23-oss"
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+
+fun localProperty(key: String, default: String = ""): String {
+    val value = localProperties.getProperty(key)?.trim().orEmpty().ifBlank { default }
+    return value.replace("\\", "\\\\").replace("\"", "\\\"")
+}
 
 android {
     namespace = "com.alanbeidanci.app"
@@ -15,14 +26,20 @@ android {
         applicationId = "com.alanbeidanci.opensource"
         minSdk = alanMinSdk
         targetSdk = 36
-        versionCode = 29
+        versionCode = 45
         versionName = alanVersionName
 
         buildConfigField("String", "API_BASE_URL", "\"https://example.invalid\"")
         buildConfigField("Boolean", "LOCAL_ONLY", "true")
+        buildConfigField("String", "VOLCENGINE_VOICE_US", "\"${localProperty("volcengine.voice.us", "en_female_stokie_uranus_bigtts")}\"")
+        buildConfigField("String", "VOLCENGINE_VOICE_UK", "\"${localProperty("volcengine.voice.uk", "zh_female_yingyujiaoxue_uranus_bigtts")}\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildTypes {
@@ -45,6 +62,10 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    androidResources {
+        noCompress += "onnx"
     }
 
     packaging {
@@ -90,6 +111,7 @@ dependencies {
     implementation("androidx.camera:camera-view:1.6.1")
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation(files("libs/sherpa-onnx-1.12.40.aar"))
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 
     testImplementation("junit:junit:4.13.2")

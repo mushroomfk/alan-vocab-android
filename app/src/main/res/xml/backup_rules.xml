@@ -8,4 +8,5 @@
     <include domain="file" path="datastore" />
     <exclude domain="sharedpref" path="alan_secure_session.xml" />
     <exclude domain="sharedpref" path="alan_device.xml" />
+    <exclude domain="sharedpref" path="alan_speech_credentials.xml" />
 </full-backup-content>

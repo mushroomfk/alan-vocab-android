@@ -89,7 +89,9 @@ fun TypingStudyScreen(
     settings: UserSettings,
     onClose: () -> Unit,
     onSelectBooks: () -> Unit,
-    viewModel: TypingViewModel = viewModel(factory = TypingViewModel.factory(container, purpose)),
+    reviewScope: String = "",
+    beyondPlan: Boolean = false,
+    viewModel: TypingViewModel = viewModel(factory = TypingViewModel.factory(container, purpose, reviewScope, beyondPlan)),
 ) {
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
@@ -165,6 +167,7 @@ fun TypingStudyScreen(
             onConfirmReview = viewModel::confirmReview,
             onRepeatProblems = viewModel::repeatProblems,
             onRepeatAll = viewModel::repeatAll,
+            onContinue = viewModel::continueLearning,
             onClose = close,
         )
         return
@@ -246,6 +249,7 @@ fun TypingStudyScreen(
         ) {
             Text(
                 when {
+                    state.listPracticeLabel.isNotEmpty() -> "${state.listPracticeLabel} · 直接输入"
                     state.isReview -> "错弱词复习 · 直接输入"
                     state.isConsolidation -> "巩固"
                     else -> "新词"
@@ -258,6 +262,7 @@ fun TypingStudyScreen(
             Surface(shape = RoundedCornerShape(12.dp), color = if (state.isReview) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.primaryContainer) {
                 Text(
                     when {
+                        state.listPracticeLabel.isNotEmpty() -> "练习 ${state.listPracticeLabel}"
                         state.isReview -> "复习模式 · 第 ${state.round} 轮"
                         state.learnMissed -> "看正确答案"
                         else -> practiceLabel(state)
@@ -356,6 +361,16 @@ fun TypingStudyScreen(
                     color = if (state.learnMissed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold,
                 )
+                if (state.learnMissed) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        displayWord,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center,
+                        fontSize = 36.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 LetterBoxInput(
                     target = displayWord,
@@ -393,6 +408,9 @@ fun TypingStudyScreen(
             )
             else -> WordInputBar(
                 hint = when {
+                    state.isLearnRecall && state.practiceForm in setOf(
+                        PracticeForm.RECALL, PracticeForm.LISTEN, PracticeForm.CLOZE, PracticeForm.FADED,
+                    ) -> "写完整个词再判断"
                     state.isLearnRecall -> "写完整词后再判断，写错可以删掉重写"
                     state.input.length > LetterInput.letters(displayWord).length -> "多输入了，删掉多余的字母"
                     state.currentError -> "这个字母不对，删掉再改"
@@ -400,8 +418,18 @@ fun TypingStudyScreen(
                 },
                 hintError = !state.isLearnRecall && (state.currentError || state.input.length > LetterInput.letters(displayWord).length),
                 wrongCount = state.currentWrong,
-                skipAvailable = if (state.isLearnRecall) true else state.skipAvailable,
+                skipAvailable = if (state.isLearnRecall) {
+                    state.practiceForm !in setOf(
+                        PracticeForm.RECALL, PracticeForm.LISTEN, PracticeForm.CLOZE, PracticeForm.FADED,
+                    )
+                } else {
+                    state.skipAvailable
+                },
                 onSkip = if (state.isLearnRecall) viewModel::skipLearnWord else viewModel::skip,
+                giveUpAvailable = state.isLearnRecall && state.practiceForm in setOf(
+                    PracticeForm.RECALL, PracticeForm.LISTEN, PracticeForm.CLOZE, PracticeForm.FADED,
+                ),
+                onGiveUp = viewModel::giveUp,
             ) {
                 LetterBoxInput(
                     target = displayWord,
@@ -422,7 +450,9 @@ fun TypingStudyScreen(
 }
 
 @Composable
-private fun practiceLabel(state: TypingUiState): String = when (state.practiceForm) {
+private fun practiceLabel(state: TypingUiState): String {
+    if (state.skillProgress.isNotBlank() && state.practiceForm != PracticeForm.STUDY) return state.skillProgress
+    return when (state.practiceForm) {
     PracticeForm.STUDY -> "先看这个词"
     PracticeForm.PICK_MEANING -> "选出中文意思"
     PracticeForm.PICK_SPELLING -> "选出正确拼写"
@@ -430,11 +460,12 @@ private fun practiceLabel(state: TypingUiState): String = when (state.practiceFo
     PracticeForm.RECALL -> recallLabel(state)
     PracticeForm.LISTEN -> productionLabel(state, "听写")
     PracticeForm.CLOZE -> productionLabel(state, "例句填空")
+    }
 }
 
 private fun recallLabel(state: TypingUiState): String {
     val assisted = if (state.assisted) " · 已听过，不算独立回忆" else ""
-    return if (state.isConsolidation) {
+    return if (state.isConsolidation || state.skillProgress.isNotBlank()) {
         "凭中文默写，不放发音$assisted"
     } else {
         "凭中文默写 · 已通过 ${state.cleanRecalls}/${MemoryPractice.PRODUCTION_GOAL}$assisted"
@@ -442,7 +473,7 @@ private fun recallLabel(state: TypingUiState): String {
 }
 
 private fun productionLabel(state: TypingUiState, name: String): String =
-    if (state.isConsolidation) name else "$name · 已通过 ${state.cleanRecalls}/${MemoryPractice.PRODUCTION_GOAL}"
+    if (state.isConsolidation || state.skillProgress.isNotBlank()) name else "$name · 已通过 ${state.cleanRecalls}/${MemoryPractice.PRODUCTION_GOAL}"
 
 @Composable
 private fun LearnActionBar(
@@ -523,12 +554,14 @@ private fun TypingStartGate(
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        if (state.isReview) {
+                        if (state.listPracticeLabel.isNotEmpty()) {
+                            "按这 ${state.originalWordCount} 个${state.listPracticeLabel}直接输入。写错可以删掉重写。"
+                        } else if (state.isReview) {
                             "本次 ${state.originalWordCount} 个错弱词，共安排 ${state.words.size} 次复习${if (state.isMainlineReview) "；只含昨日及更早的主线错题与薄弱词" else ""}"
                         } else if (state.isConsolidation) {
-                            "本次 ${state.words.size} 个到了复习时间的词。先凭中文写，不放发音。第一次就写对，下次才隔更久；没想起来就明天再查。"
+                            "本次 ${state.words.size} 个到了复习时间的词，按到期分项开始。每个词当天首次未见答案的检查用于排期，后面的分项继续练习。没想起来的，完成练习后次日再查。"
                         } else {
-                            "本次 ${state.words.size} 个新词。先看，再凭中文默写，并分开确认词义、听写和例句。写对 3 次只算这次练习通过。只剩一个词时，不会连着让你再写。"
+                            "本次 ${state.words.size} 个新词。先看，再按各分项需要的次数练习。看过答案后的通过只算练习，不增加长期稳定度。只剩一个词时，可以下次继续。"
                         },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -565,6 +598,7 @@ private fun TypingComplete(
     onConfirmReview: () -> Unit,
     onRepeatProblems: () -> Unit,
     onRepeatAll: () -> Unit,
+    onContinue: () -> Unit,
     onClose: () -> Unit,
 ) {
     val accuracy = if (state.typedChars == 0) 0 else state.correctChars * 100 / state.typedChars
@@ -595,7 +629,7 @@ private fun TypingComplete(
                 }
                 "自己想起来 ${state.cleanFinishes} 个，没想起来 ${state.lapseFinishes} 个，听过再写对 ${state.recheckFinishes} 个。$next 其余明天再查。跳过不算忘。"
             } else if (state.isLearnRecall) {
-                "练习通过 ${state.graduatedCount}/${state.originalWordCount} 个，字符正确率 $accuracy%。这只是这次练习通过。回到首页还要听写和看中文各测一次，通过后明天再查，才开始算记住。" +
+                "练习通过 ${state.graduatedCount}/${state.originalWordCount} 个，字符正确率 $accuracy%。这只是练习完成。回到首页完成双测，各分项之后还会在未见答案时独立检查。" +
                     (if (state.deferredCount > 0) "还有 ${state.deferredCount} 个下次接着写，不用现在连着输入。" else "") +
                     if (state.parkedCount > 0) "还有 ${state.parkedCount} 个没写稳，下次从更容易的题开始。" else ""
             } else {
@@ -605,6 +639,22 @@ private fun TypingComplete(
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(24.dp))
+        if (state.purpose == TypingPurpose.MAINLINE_LEARN && state.canContinueLearning) {
+            Button(
+                onClick = onContinue,
+                modifier = Modifier.fillMaxWidth().height(54.dp),
+                shape = RoundedCornerShape(18.dp),
+            ) {
+                Text("继续学", fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "今天的计划时长已经用完，还可以接着学。",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(10.dp))
+        }
         if (state.isMainlineReview) {
             Button(
                 onClick = onConfirmReview,

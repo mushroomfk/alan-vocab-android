@@ -19,6 +19,8 @@ fun WordInputBar(
     wrongCount: Int,
     skipAvailable: Boolean,
     onSkip: () -> Unit,
+    giveUpAvailable: Boolean = false,
+    onGiveUp: () -> Unit = {},
     input: @Composable () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 4.dp, bottom = 8.dp)) {
@@ -31,6 +33,8 @@ fun WordInputBar(
             )
             if (skipAvailable) {
                 TextButton(onClick = onSkip) { Text("跳过") }
+            } else if (giveUpAvailable) {
+                TextButton(onClick = onGiveUp) { Text("不会") }
             } else if (wrongCount > 0) {
                 Text(
                     "已错 $wrongCount 次",

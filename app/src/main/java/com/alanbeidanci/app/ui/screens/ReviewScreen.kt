@@ -1,6 +1,7 @@
 package com.alanbeidanci.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -24,24 +26,31 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.alanbeidanci.app.AppContainer
+import com.alanbeidanci.app.audio.PronunciationPlayer
 import com.alanbeidanci.app.data.MainlineScheduler
+import com.alanbeidanci.app.data.UserSettings
 import com.alanbeidanci.app.data.WordWithProgress
 import com.alanbeidanci.app.ui.ReviewViewModel
 import com.alanbeidanci.app.ui.components.AppCard
+import com.alanbeidanci.app.ui.components.PronunciationNotice
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -51,9 +60,14 @@ fun ReviewScreen(
     container: AppContainer,
     onStartReview: () -> Unit,
     onStartForgotten: () -> Unit,
+    onPracticeList: (String) -> Unit,
     viewModel: ReviewViewModel = viewModel(factory = ReviewViewModel.factory(container)),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val settings by container.preferences.settings.collectAsState(initial = UserSettings())
+    val context = LocalContext.current
+    val pronunciation = remember(context) { PronunciationPlayer(context) }
+    DisposableEffect(pronunciation) { onDispose { pronunciation.release() } }
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val tabs = listOf(
         "待复习" to (state.forgotten + state.pending),
@@ -62,6 +76,7 @@ fun ReviewScreen(
         "收藏" to state.favorite,
     )
     val selectedItems = tabs[selectedTab].second
+    val selectedScope = listOf("pending", "mastered", "fixed", "favorite")[selectedTab]
     val remedyTotal = state.pending.size
     val now = System.currentTimeMillis()
     val dueForgotten = state.forgotten.filter { item ->
@@ -102,6 +117,7 @@ fun ReviewScreen(
                     Text(if (state.forgotten.isNotEmpty()) "没想起来的词明天再查" else "今天没有要查的词", fontWeight = FontWeight.Bold)
                 }
             }
+            PronunciationNotice(pronunciation)
         }
         item {
             AppCard(Modifier.fillMaxWidth()) {
@@ -145,11 +161,24 @@ fun ReviewScreen(
             item { EmptyReviewState(selectedTab) }
         } else {
             item {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text("共 ${selectedItems.size} 个单词", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = { onPracticeList(selectedScope) }, shape = RoundedCornerShape(14.dp)) {
+                        Icon(Icons.Outlined.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("去练习", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
-            items(selectedItems, key = { it.word.id }) { item -> ReviewWordRow(item, showDue = false) }
+            items(selectedItems, key = { it.word.id }) { item ->
+                ReviewWordRow(item, showDue = false) {
+                    pronunciation.speak(item.word.word, accent = settings.accent, rate = settings.studySpeechRate)
+                }
+            }
         }
     }
 }
@@ -171,7 +200,7 @@ private fun ReviewMainlineMetric(label: String, value: Int, urgent: Boolean, mod
 }
 
 @Composable
-private fun ReviewWordRow(item: WordWithProgress, showDue: Boolean) {
+private fun ReviewWordRow(item: WordWithProgress, showDue: Boolean, onSpeak: () -> Unit) {
     val progress = item.progress ?: return
     AppCard(Modifier.fillMaxWidth()) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -183,7 +212,22 @@ private fun ReviewWordRow(item: WordWithProgress, showDue: Boolean) {
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(item.word.word, style = MaterialTheme.typography.titleMedium)
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(onClick = onSpeak)
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(item.word.word, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        Icons.AutoMirrored.Outlined.VolumeUp,
+                        contentDescription = "朗读 ${item.word.word}",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 Text(item.word.translation, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
             Column(horizontalAlignment = Alignment.End) {

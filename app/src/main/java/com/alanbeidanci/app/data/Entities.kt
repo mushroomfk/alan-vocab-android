@@ -96,6 +96,11 @@ data class WordProgressEntity(
     val abilityListening: Int = 0,
     val abilitySpelling: Int = 0,
     val abilityContext: Int = 0,
+    val skillMemory: String = "",
+    val practicePlan: String = "",
+    val practiceSavedAt: Long = 0,
+    // Shared across skills, sessions and backups. A later probe after exposure is practice only.
+    val answerExposedAt: Long = 0,
 )
 
 @Entity(
@@ -123,8 +128,22 @@ data class ReviewLogEntity(
     val memoryPreviousReviewAt: Long = 0,
     val memoryIndependent: Boolean = false,
     val memoryModelRevision: Int = 0,
+    val memorySkill: String = "",
+    val memoryWeight: Double = 1.0,
+    val memorySource: String = "",
+    val memoryExposed: Boolean = false,
 ) {
     fun countsAsAnswer(): Boolean = eventKind.isEmpty() || eventKind == "answer"
+
+    fun actualSkill(): MemorySkill? = when {
+        memorySkill.isNotBlank() -> MemorySkill.entries.firstOrNull { it.name == memorySkill }
+        practiceForm.isNotBlank() -> MemorySkill.forForm(practiceForm)
+        isDual && questionType == QuestionType.MEANING.name -> MemorySkill.SPELLING
+        questionType == QuestionType.MEANING.name -> MemorySkill.MEANING
+        questionType == QuestionType.LISTENING.name -> MemorySkill.LISTENING
+        questionType == QuestionType.SPELLING.name -> MemorySkill.SPELLING
+        else -> null
+    }
 }
 
 @Entity(tableName = "study_sessions")

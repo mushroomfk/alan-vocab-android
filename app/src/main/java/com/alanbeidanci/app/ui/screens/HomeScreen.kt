@@ -30,6 +30,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -55,6 +56,7 @@ import com.alanbeidanci.app.ui.theme.AlanHero
 fun HomeScreen(
     container: AppContainer,
     onStartMainline: () -> Unit,
+    onContinueLearning: () -> Unit,
     onBooks: () -> Unit,
     mainlinePreparing: Boolean = false,
     mainlineEnabled: Boolean = true,
@@ -67,6 +69,7 @@ fun HomeScreen(
     val currentBook = state.currentBook
     val bookProgress = plan.learnedWords.toFloat() / plan.totalWords.coerceAtLeast(1)
     val todayCap = plan.newWordCap.coerceAtLeast(0)
+    val continueAfterPlan = plan.step == MainlineStep.DONE && plan.extraNewWordCount > 0
     val goalProgress = if (todayCap == 0) 0f else plan.learnedToday.toFloat() / todayCap
     val task = if (!mainlineEnabled) {
         Triple(
@@ -100,7 +103,11 @@ fun HomeScreen(
             "先看，再凭中文默写，并分开确认词义、听写和例句。写对 3 次只算这次练习通过，第二天再查一次才开始算记住。",
             "开始学今天的词",
         )
-        MainlineStep.DONE -> Triple(
+        MainlineStep.DONE -> if (plan.extraNewWordCount > 0) Triple(
+            "今天的安排做完了",
+            "设定的时长已经排完。还可以继续学新词，学多久都可以。",
+            "继续学新词",
+        ) else Triple(
             "今天的学习做完了",
             "今天要做的都做完了${if (plan.deferredRemedyCount > 0) "。有 ${plan.deferredRemedyCount} 个刚没记住的词，明天再测" else ""}。也可以到复习页自己再看一遍。",
             "今天做完了",
@@ -129,19 +136,25 @@ fun HomeScreen(
             Text(task.second, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.84f))
             Spacer(Modifier.height(20.dp))
             Button(
-                onClick = onStartMainline,
-                enabled = mainlineEnabled && !mainlinePreparing && plan.step != MainlineStep.DONE && plan.currentWords.isNotEmpty(),
+                onClick = if (continueAfterPlan) onContinueLearning else onStartMainline,
+                enabled = mainlineEnabled && !mainlinePreparing && (continueAfterPlan || (plan.step != MainlineStep.DONE && plan.currentWords.isNotEmpty())),
                 colors = ButtonDefaults.buttonColors(containerColor = AlanAmber, contentColor = Color(0xFF24342F)),
                 shape = RoundedCornerShape(16.dp),
             ) {
-                Icon(if (plan.step == MainlineStep.DONE) Icons.Outlined.CheckCircle else Icons.Outlined.PlayArrow, contentDescription = null)
+                Icon(if (plan.step == MainlineStep.DONE && !continueAfterPlan) Icons.Outlined.CheckCircle else Icons.Outlined.PlayArrow, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
                 Text(if (mainlinePreparing) "正在进入…" else task.third, fontWeight = FontWeight.Bold)
+            }
+            if (plan.step == MainlineStep.NEW_WORD_TEST && plan.extraNewWordCount > 0) {
+                TextButton(onClick = onContinueLearning, enabled = mainlineEnabled && !mainlinePreparing) {
+                    Text("再学一批新词", color = Color.White, fontWeight = FontWeight.Bold)
+                }
             }
             Spacer(Modifier.height(22.dp))
             Text(
                 when {
                     todayCap == 0 && plan.totalWords == 0 -> "今日新学 ${plan.learnedToday} 词"
+                    todayCap == 0 && plan.extraNewWordCount > 0 -> "今天的计划时长先留给复习。做完后还可以继续学新词"
                     todayCap == 0 -> "今天先不学新词，时间留给要复习的词"
                     todayCap < state.settings.dailyGoal -> "今日新学 ${plan.learnedToday}/$todayCap 词 · 上限 ${state.settings.dailyGoal}，先复习到期的词"
                     else -> "今日新学 ${plan.learnedToday}/$todayCap 词"

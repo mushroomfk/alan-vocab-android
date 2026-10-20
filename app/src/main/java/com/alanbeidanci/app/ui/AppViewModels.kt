@@ -485,7 +485,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         container.repository.observeBookProgress(),
         container.preferences.settings,
         container.repository.observeScopedWords(),
-        combine(container.repository.progress, container.repository.sessions) { progressItems, studySessions ->
+        combine(container.repository.progress, container.repository.sessions, container.repository.calendarChanges) { progressItems, studySessions, _ ->
             progressItems to studySessions
         },
     ) { summary, books, settings, words, progressAndSessions ->

@@ -50,7 +50,7 @@ Alan 背单词围绕一件事设计：**让你从认识一个词，走到能自�
 
 巩固排期看第一次没有提示时的回忆结果。当时没有想起来，即使随后练会，也会保留这次遗忘的记录，并在次日再查。
 
-应用采用基于 FSRS-5 的排期，结合间隔、记忆稳定度与难度估计下次复习时间。已经熟悉的词也会到期复习，记忆需要持续检查。
+应用采用基于 FSRS-5 的排期，结合间隔、记忆稳定度与难度估计下次复习时间。词义、听写、拼写、例句分别记录状态，复习从薄弱或到期的那一项开始；同一天已经看过答案后的作答只算练习，不提高长期稳定度。已经熟悉的词也会到期复习，记忆需要持续检查。详见[分项记忆](docs/SKILL_MEMORY_SCHEDULING.md)。
 
 ### 4. 先照顾旧词，再学习新词
 
@@ -75,13 +75,15 @@ Alan 背单词围绕一件事设计：**让你从认识一个词，走到能自�
 3. 从首页开始当天任务，按提示学习、测试、复习。
 4. 在「我的」定期导出 JSON 备份，保存在自己能找到的地方。
 
-还提供中英文查词、拍照或相册识别英文、收藏、学习统计、深色模式和每日提醒。发音使用 Android Text-to-Speech；能否完全离线及可用口音，取决于设备语音引擎和语音包。
+还提供中英文查词、拍照或相册识别英文、收藏、学习统计、深色模式和每日提醒。
+
+英文发音优先播放本机缓存；在「我的 → 发音偏好」填写自己的火山引擎 Key 后，有网且未缓存时联网合成并缓存。没有 Key、没网或请求超过 3.5 秒仍未开始播放时，使用安装包内的 Piper 离线语音（美式 Kristin、英式 Cori）。仓库不含任何语音 Key。离线语音资源的许可见[第三方说明](THIRD_PARTY_NOTICES.md)，其中 espeak-ng 数据为 GPL-3.0。
 
 开源版应用 ID 为 `com.alanbeidanci.opensource`，可与原版并存，使用独立的数据空间。**不要把原版完整词库备份导入示例版来迁移学习记录**：词库不同，无法保证进度匹配。本仓库不提供原版签名密钥或原版 APK；当前也没有正式签名发布包。
 
 ## 开发与构建
 
-Kotlin / Jetpack Compose / Room / DataStore / WorkManager。Android 8.0（API 26）及以上；compile / target SDK 36。当前版本 `1.6.7-oss`。
+Kotlin / Jetpack Compose / Room / DataStore / WorkManager。Android 8.0（API 26）及以上；compile / target SDK 36。当前版本 `1.6.23-oss`。
 
 准备 JDK 21、Android SDK Platform 36 和 Build Tools 36.0.0。在 `local.properties` 设置 `sdk.dir`，或配置 `ANDROID_HOME`。项目自带 Gradle Wrapper 9.5.0，首次构建需要联网下载依赖。
 

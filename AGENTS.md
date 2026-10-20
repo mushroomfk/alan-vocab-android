@@ -1,7 +1,7 @@
 # 开源版维护约定
 
 - 中文沟通，如实记录验证；未验证的内容明确说明。
-- 本仓库独立维护 Android 开源版 `1.6.7-oss`，`LOCAL_ONLY=true`，应用 ID 为 `com.alanbeidanci.opensource`。
+- 本仓库独立维护 Android 开源版 `1.6.23-oss`，`LOCAL_ONLY=true`，应用 ID 为 `com.alanbeidanci.opensource`。
 - 仅附带 2 本共 40 词的原创示例词书。不得从原版直接复制授权不明的数据、历史日志或签名资料。
 - 保留用户工作区已有修改。操作目录前确认位置。
 - 测试仅使用独立模拟器，不得清除日常设备数据。

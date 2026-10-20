@@ -36,7 +36,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -245,8 +244,22 @@ fun RemedyTestScreen(
                                 textAlign = TextAlign.Center,
                             )
                         }
+                    } else if (state.holdResult && !state.holdCorrect) {
+                        Text("正确拼写", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.height(8.dp))
+                        Text(displayWord, fontSize = 40.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                        if (wordTranslation.isNotBlank()) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(wordTranslation, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                        }
                     } else {
                         Text("请根据发音写出单词", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    if (state.round == RemedyRound.CHINESE && state.holdResult && !state.holdCorrect) {
+                        Spacer(Modifier.height(16.dp))
+                        Text("正确拼写", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.height(8.dp))
+                        Text(displayWord, fontSize = 40.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                     }
                 }
             }
@@ -273,36 +286,62 @@ fun RemedyTestScreen(
         if (state.holdResult) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 4.dp, bottom = 8.dp)) {
                 Text(
-                    if (state.holdCorrect) "对了" else "错了。红字是没写对的字母",
+                    when {
+                        state.holdCorrect -> "对了"
+                        state.input.isBlank() -> "不会。正确拼写在上面"
+                        else -> "错了。红字是没写对的字母，正确拼写在上面"
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     textAlign = TextAlign.Center,
                     color = if (state.holdCorrect) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                     fontWeight = FontWeight.Bold,
                 )
-                Spacer(Modifier.height(8.dp))
-                LetterBoxInput(
-                    target = displayWord,
-                    value = state.input,
-                    enabled = false,
-                    autoFocus = state.currentIndex to "result",
-                    markCorrectness = true,
-                    onInput = {},
-                )
+                if (!state.holdCorrect) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        displayWord,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center,
+                        fontSize = 36.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    if (wordTranslation.isNotBlank()) {
+                        Text(
+                            wordTranslation,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (state.input.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    LetterBoxInput(
+                        target = displayWord,
+                        value = state.input,
+                        enabled = false,
+                        autoFocus = state.currentIndex to "result",
+                        markCorrectness = true,
+                        onInput = {},
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = viewModel::acknowledgeResult,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(16.dp),
                 ) {
-                    Text(if (state.holdCorrect) "下一个" else "看清了，再写一次", fontWeight = FontWeight.Bold)
+                    Text("下一个", fontWeight = FontWeight.Bold)
                 }
             }
         } else WordInputBar(
-            hint = if (state.currentError) "这个词不对，再写一次" else "写完整个词再判断，中途可以删除",
+            hint = "写完整个词再判断",
             hintError = state.currentError,
             wrongCount = state.currentWrong,
             skipAvailable = state.skipAvailable,
             onSkip = viewModel::skip,
+            giveUpAvailable = true,
+            onGiveUp = viewModel::giveUp,
         ) {
             LetterBoxInput(
                 target = displayWord,
